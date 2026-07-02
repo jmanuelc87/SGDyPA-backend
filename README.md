@@ -60,9 +60,22 @@ Servicios expuestos por defecto:
 | Servicio | URL / puerto | Seed mínimo |
 | --- | --- | --- |
 | PostgreSQL + pgvector | `localhost:5432` (`sgdypa` / `sgdypa_dev_password`) | Extensión `vector`, schema `sgdypa` y tabla `sgdypa.dev_seed`. |
-| Keycloak 26.x | `http://localhost:8080` (`admin` / `admin`) | Realm `sgdypa`, cliente público `sgdypa-spa` con PKCE y usuario `dev-admin` / `dev-admin`. |
+| Keycloak 26.x | `http://localhost:8080` (`admin` / `admin`) | Realm `sgdypa`, cliente público `sgdypa-spa` con PKCE (mapper de audiencia que emite `sgdypa-api`), cliente bearer-only `sgdypa-api` y usuario `dev-admin` / `dev-admin`. |
 | MinIO Object Lock | API `http://localhost:9000`, consola `http://localhost:9001` (`minioadmin` / `minioadmin`) | Bucket `sgdypa-documents` creado con Object Lock, versioning y retención compliance de 30 días. |
 | Redis | `localhost:6379` | AOF habilitado para desarrollo. |
 | Apache Tika | `http://localhost:9998` | Imagen full con OCR/Tesseract disponible para el pipeline de extracción. |
 
 Las variables de puertos y credenciales se pueden sobrescribir con variables de entorno (`POSTGRES_PORT`, `KEYCLOAK_PORT`, `MINIO_*`, `REDIS_PORT`, `TIKA_PORT`) antes de ejecutar Compose. Los datos persistentes viven en volúmenes Docker nombrados; para reiniciar desde cero usa `docker compose down -v`.
+
+### Autenticación bearer OIDC
+
+El backend valida los access tokens de Keycloak con estas variables de entorno:
+
+| Variable | Valor de desarrollo | Descripción |
+| --- | --- | --- |
+| `KEYCLOAK_OIDC_ISSUER` | `http://localhost:8080/realms/sgdypa` | Emisor (`iss`) esperado del realm. |
+| `KEYCLOAK_OIDC_AUDIENCE` | `sgdypa-api` | Audiencia (`aud`) exigida. El cliente `sgdypa-spa` la emite con el mapper `sgdypa-api-audience`. |
+| `KEYCLOAK_OIDC_JWKS_URL` | `http://localhost:8080/realms/sgdypa/protocol/openid-connect/certs` | Endpoint JWKS para verificar la firma RS256. |
+| `KEYCLOAK_OIDC_ALGORITHMS` | `RS256` | Algoritmos de firma aceptados (lista separada por comas). |
+
+El realm importado ya alinea el token emitido con esta validación: el cliente público `sgdypa-spa` incluye un mapper de audiencia que añade `sgdypa-api` al access token, y `sgdypa-api` existe como cliente bearer-only que representa al recurso.
