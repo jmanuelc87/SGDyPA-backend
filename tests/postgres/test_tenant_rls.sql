@@ -40,6 +40,15 @@ SELECT count(*) = 0 AS guc_transactional_ok FROM sgdypa.rls_probe \gset
 \endif
 COMMIT;
 
+BEGIN;
+SELECT sgdypa.set_current_organization('22222222-2222-2222-2222-222222222222');
+SELECT count(*) = 1 AS pooled_connection_reuse_ok FROM sgdypa.rls_probe \gset
+\if :pooled_connection_reuse_ok
+\else
+    DO $$ BEGIN RAISE EXCEPTION 'RLS pooled connection reuse invariant failed: org B should see exactly one row after org A transaction'; END $$;
+\endif
+COMMIT;
+
 RESET ROLE;
 
 BEGIN;
