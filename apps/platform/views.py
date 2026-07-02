@@ -3,9 +3,27 @@ from typing import Any
 
 from django.http import HttpRequest, JsonResponse
 from django.urls import reverse
+from django.utils import timezone
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.platform.models import AsyncJob
 from apps.platform.tasks import complete_async_job
+
+
+class HealthCheckView(APIView):
+    authentication_classes: list[type] = []
+    permission_classes: list[type] = []
+
+    def get(self, request: Request) -> Response:
+        checked_at = timezone.now().replace(microsecond=0)
+        return Response(
+            {
+                "status": "ok",
+                "checked_at": checked_at,
+            }
+        )
 
 
 def _job_payload(request: HttpRequest, job: AsyncJob) -> dict[str, Any]:
@@ -24,7 +42,7 @@ def _job_payload(request: HttpRequest, job: AsyncJob) -> dict[str, Any]:
             else None
         ),
         "url": request.build_absolute_uri(
-            reverse("platform-async-job-detail", kwargs={"job_id": job.id})
+            reverse("platform:async-job-detail", kwargs={"job_id": job.id})
         ),
     }
 

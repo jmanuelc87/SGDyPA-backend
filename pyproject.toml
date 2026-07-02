@@ -7,6 +7,8 @@ requires-python = ">=3.12"
 dependencies = [
     "celery[redis]>=5.4,<6.0",
     "django>=5.0,<6.0",
+    "djangorestframework>=3.15,<4.0",
+    "PyJWT[crypto]>=2.8,<3.0",
 ]
 
 [dependency-groups]
@@ -45,5 +47,5 @@ mypy_path = ["."]
 exclude = ["docs/SGDyPA-docs/.git"]
 
 [[tool.mypy.overrides]]
-module = ["django.*"]
+module = ["django.*", "rest_framework.*"]
 ignore_missing_imports = true
