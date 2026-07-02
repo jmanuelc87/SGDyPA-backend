@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -34,6 +35,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.identity.middleware.KeycloakBearerAuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -71,3 +73,15 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+AUTH_USER_MODEL = "identity.User"
+
+KEYCLOAK_OIDC = {
+    "ISSUER": os.environ.get("KEYCLOAK_OIDC_ISSUER"),
+    "AUDIENCE": os.environ.get("KEYCLOAK_OIDC_AUDIENCE"),
+    "JWKS_URL": os.environ.get("KEYCLOAK_OIDC_JWKS_URL"),
+    "ALGORITHMS": tuple(
+        algorithm.strip()
+        for algorithm in os.environ.get("KEYCLOAK_OIDC_ALGORITHMS", "RS256").split(",")
+        if algorithm.strip()
+    ),
+}
