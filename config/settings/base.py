@@ -27,15 +27,21 @@ BOUNDED_CONTEXT_APPS = [
     "apps.platform",
 ]
 
-INSTALLED_APPS = DJANGO_APPS + BOUNDED_CONTEXT_APPS
+THIRD_PARTY_APPS = [
+    "rest_framework",
+]
+
+INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + BOUNDED_CONTEXT_APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "apps.platform.middleware.RequestIDMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "apps.identity.middleware.KeycloakBearerAuthenticationMiddleware",
+    "apps.platform.middleware.TenantContextMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -84,4 +90,15 @@ KEYCLOAK_OIDC = {
         for algorithm in os.environ.get("KEYCLOAK_OIDC_ALGORITHMS", "RS256").split(",")
         if algorithm.strip()
     ),
+}
+
+REST_FRAMEWORK = {
+    "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%SZ",
+    "EXCEPTION_HANDLER": "apps.platform.api_errors.api_exception_handler",
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
+    "DEFAULT_PARSER_CLASSES": [
+        "rest_framework.parsers.JSONParser",
+    ],
 }
