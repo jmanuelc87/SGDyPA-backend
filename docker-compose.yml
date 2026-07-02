@@ -93,6 +93,41 @@ services:
       retries: 10
       start_period: 5s
 
+  celery-worker:
+    image: python:3.12-slim
+    container_name: sgdypa-celery-worker
+    working_dir: /app
+    command: >
+      sh -c "pip install -e . &&
+             celery -A config worker --loglevel=${CELERY_LOG_LEVEL:-INFO}"
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.dev}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    volumes:
+      - .:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    image: python:3.12-slim
+    container_name: sgdypa-celery-beat
+    working_dir: /app
+    command: >
+      sh -c "pip install -e . &&
+             celery -A config beat --loglevel=${CELERY_LOG_LEVEL:-INFO}
+             --schedule=/tmp/celerybeat-schedule"
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.dev}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    volumes:
+      - .:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+
   tika:
     image: apache/tika:2.9.2.1-full
     container_name: sgdypa-tika

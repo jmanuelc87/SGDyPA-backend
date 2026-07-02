@@ -67,6 +67,16 @@ Servicios expuestos por defecto:
 
 Las variables de puertos y credenciales se pueden sobrescribir con variables de entorno (`POSTGRES_PORT`, `KEYCLOAK_PORT`, `MINIO_*`, `REDIS_PORT`, `TIKA_PORT`) antes de ejecutar Compose. Los datos persistentes viven en volúmenes Docker nombrados; para reiniciar desde cero usa `docker compose down -v`.
 
+## Jobs asíncronos
+
+Celery usa Redis como broker y result backend por defecto (`redis://localhost:6379/0`). En Compose, `celery-worker` ejecuta las tareas encoladas y `celery-beat` queda listo para tareas programadas.
+
+```bash
+docker compose up -d redis celery-worker celery-beat
+```
+
+Convención de tareas: toda tarea Celery de SGDyPA debe aceptar un `idempotency_key` estable del recurso/operación que la dispara. Las operaciones diferidas expuestas por API deben devolver `202 Accepted` y permitir sondeo por `GET` del recurso creado; el recurso base disponible es `POST /api/v1/platform/async-jobs` con header `Idempotency-Key`, seguido de `GET /api/v1/platform/async-jobs/{id}`.
+
 ### Autenticación bearer OIDC
 
 El backend valida los access tokens de Keycloak con estas variables de entorno:
