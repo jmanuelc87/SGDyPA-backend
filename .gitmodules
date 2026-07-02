@@ -1,3 +1,3 @@
 [submodule "docs/SGDyPA-docs"]
 	path = docs/SGDyPA-docs
-	url = git@github.com:jmanuelc87/SGDyPA-doc.git
+	url = https://github.com/jmanuelc87/SGDyPA-backend.git
