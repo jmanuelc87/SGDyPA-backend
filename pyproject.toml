@@ -1,7 +1,42 @@
 [project]
 name = "sgdypa-backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Backend para el Software de Gestion Documental y Procesos de Auditoria"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "django>=5.0,<6.0",
+]
+
+[dependency-groups]
+dev = [
+    "black>=24.0",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "ruff>=0.5",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+src = ["apps", "config"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.12"
+plugins = []
+strict = true
+disallow_subclassing_any = false
+mypy_path = ["apps", "config"]
+exclude = ["docs/SGDyPA-docs/.git"]
+
+[[tool.mypy.overrides]]
+module = ["django.*"]
+ignore_missing_imports = true
