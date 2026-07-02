@@ -31,6 +31,13 @@ El paquete `config.settings` contiene settings separados por entorno:
 
 Por defecto, `manage.py`, ASGI y WSGI cargan `config.settings.dev`. En despliegues se debe fijar `DJANGO_SETTINGS_MODULE` explícitamente.
 
+
+## Aislamiento por tenant en PostgreSQL
+
+El bootstrap de PostgreSQL crea el rol `sgdypa_app`, sin `BYPASSRLS`, y helpers en el schema `sgdypa` para aplicar RLS fail-closed a tablas de dominio con columna `organization_id`. Cada request debe fijar `app.current_org` con `sgdypa.set_current_organization(<org_uuid>)` como primera sentencia dentro de una transacción explícita, equivalente a `SET LOCAL`.
+
+Para cada tabla de dominio nueva con `organization_id`, la migración que la cree debe llamar a `sgdypa.enable_organization_rls('<schema>.<tabla>'::regclass)`. Cuando exista `sgdypa.trail_entry`, debe invocar también `sgdypa.grant_trail_entry_append_only()` para conservar el ledger como append-only desde el rol de aplicación.
+
 ## Calidad de código
 
 El repositorio incluye configuración de pre-commit con Ruff, Black y mypy.
