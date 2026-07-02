@@ -1,7 +1,10 @@
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
+from django.http import Http404
 from django.test import SimpleTestCase, override_settings
 from django.urls import path
 from rest_framework import serializers
-from rest_framework.exceptions import APIException
+from rest_framework.authentication import BaseAuthentication
+from rest_framework.exceptions import APIException, NotAuthenticated, Throttled
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -55,12 +58,56 @@ class UnhandledExceptionView(APIView):
         )
 
 
+class DjangoHttp404View(APIView):
+    authentication_classes: list[type] = []
+    permission_classes: list[type] = []
+
+    def get(self, request: Request) -> Response:
+        raise Http404("Object matching query does not exist.")
+
+
+class DjangoPermissionDeniedView(APIView):
+    authentication_classes: list[type] = []
+    permission_classes: list[type] = []
+
+    def get(self, request: Request) -> Response:
+        raise DjangoPermissionDenied("You cannot see this resource.")
+
+
+class ChallengeAuthentication(BaseAuthentication):
+    def authenticate(self, request: Request) -> None:
+        raise NotAuthenticated()
+
+    def authenticate_header(self, request: Request) -> str:
+        return 'Bearer realm="api"'
+
+
+class ChallengeAuthView(APIView):
+    authentication_classes = [ChallengeAuthentication]
+    permission_classes: list[type] = []
+
+    def get(self, request: Request) -> Response:  # pragma: no cover - never reached
+        return Response({})
+
+
+class ThrottledProbeView(APIView):
+    authentication_classes: list[type] = []
+    permission_classes: list[type] = []
+
+    def get(self, request: Request) -> Response:
+        raise Throttled(wait=42)
+
+
 urlpatterns = [
     path("api/v1/health-checks", HealthCheckView.as_view()),
     path("api/v1/validation-probes", ValidationProbeView.as_view()),
     path("api/v1/business-errors", BusinessErrorProbeView.as_view()),
     path("api/v1/sensitive-errors", SensitiveAPIExceptionView.as_view()),
     path("api/v1/unhandled-errors", UnhandledExceptionView.as_view()),
+    path("api/v1/django-404-probes", DjangoHttp404View.as_view()),
+    path("api/v1/django-403-probes", DjangoPermissionDeniedView.as_view()),
+    path("api/v1/challenge-auth-probes", ChallengeAuthView.as_view()),
+    path("api/v1/throttled-probes", ThrottledProbeView.as_view()),
 ]
 
 handler404 = "apps.platform.api_errors.api_not_found"
@@ -123,6 +170,49 @@ class APIErrorEnvelopeTests(SimpleTestCase):
                 "request_id": "req_test_missing",
             },
         )
+
+    def test_django_http404_uses_not_found_envelope(self) -> None:
+        response = self.client.get(
+            "/api/v1/django-404-probes",
+            HTTP_X_REQUEST_ID="req_test_django_404",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "not_found")
+        self.assertEqual(payload["message"], "Not found.")
+        self.assertEqual(payload["request_id"], "req_test_django_404")
+
+    def test_django_permission_denied_uses_permission_denied_envelope(self) -> None:
+        response = self.client.get(
+            "/api/v1/django-403-probes",
+            HTTP_X_REQUEST_ID="req_test_django_403",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        payload = response.json()["error"]
+        self.assertEqual(payload["code"], "permission_denied")
+        self.assertEqual(
+            payload["message"],
+            "You do not have permission to perform this action.",
+        )
+        self.assertEqual(payload["request_id"], "req_test_django_403")
+
+    def test_auth_challenge_header_is_preserved_on_envelope(self) -> None:
+        response = self.client.get("/api/v1/challenge-auth-probes")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response["WWW-Authenticate"], 'Bearer realm="api"')
+        self.assertEqual(response.json()["error"]["code"], "not_authenticated")
+        self.assertEqual(response["Content-Type"], "application/json")
+
+    def test_throttle_retry_after_header_is_preserved_on_envelope(self) -> None:
+        response = self.client.get("/api/v1/throttled-probes")
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response["Retry-After"], "42")
+        self.assertEqual(response.json()["error"]["code"], "throttled")
+        self.assertEqual(response["Content-Type"], "application/json")
 
     def test_error_responses_do_not_leak_sensitive_internals(self) -> None:
         for url in ("/api/v1/sensitive-errors", "/api/v1/unhandled-errors"):

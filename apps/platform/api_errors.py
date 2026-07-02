@@ -4,7 +4,8 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from django.http import HttpRequest, JsonResponse
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
+from django.http import Http404, HttpRequest, JsonResponse
 from rest_framework import exceptions, serializers, status
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -23,15 +24,29 @@ SENSITIVE_PATTERNS = [
     )
 ]
 
+# Django's Http404 and PermissionDenied are normalized by DRF's exception
+# handler into 404/403 responses, so they must map to stable codes too — the
+# raw exceptions are not APIException subclasses and would otherwise fall
+# through to internal_error.
 EXCEPTION_CODE_MAP: dict[type[Exception], ErrorCode] = {
     exceptions.AuthenticationFailed: ErrorCode.AUTHENTICATION_FAILED,
     exceptions.NotAuthenticated: ErrorCode.NOT_AUTHENTICATED,
     exceptions.NotFound: ErrorCode.NOT_FOUND,
+    Http404: ErrorCode.NOT_FOUND,
     exceptions.MethodNotAllowed: ErrorCode.METHOD_NOT_ALLOWED,
     exceptions.PermissionDenied: ErrorCode.PERMISSION_DENIED,
+    DjangoPermissionDenied: ErrorCode.PERMISSION_DENIED,
     exceptions.ParseError: ErrorCode.PARSE_ERROR,
     exceptions.Throttled: ErrorCode.THROTTLED,
     exceptions.UnsupportedMediaType: ErrorCode.UNSUPPORTED_MEDIA_TYPE,
+}
+
+# Default messages for codes whose originating exception is not a DRF
+# APIException (Django's Http404 / PermissionDenied), so the envelope carries a
+# stable, non-leaking message instead of the internal-error fallback.
+CODE_DEFAULT_MESSAGES: dict[ErrorCode, str] = {
+    ErrorCode.NOT_FOUND: "Not found.",
+    ErrorCode.PERMISSION_DENIED: "You do not have permission to perform this action.",
 }
 
 
@@ -58,6 +73,7 @@ def api_exception_handler(exc: Exception, context: dict[str, Any]) -> Response:
         details=details,
         status_code=response.status_code,
         request=request,
+        headers=response.headers,
     )
 
 
@@ -68,8 +84,9 @@ def build_error_response(
     details: object,
     status_code: int,
     request: Request | HttpRequest | None,
+    headers: Mapping[str, str] | None = None,
 ) -> Response:
-    return Response(
+    response = Response(
         build_error_payload(
             code=code,
             message=message,
@@ -78,6 +95,17 @@ def build_error_response(
         ),
         status=status_code,
     )
+    if headers:
+        # Preserve protocol headers DRF attaches to error responses, such as
+        # WWW-Authenticate (auth challenges) and Retry-After (throttling), so
+        # clients still receive the challenge or retry delay with the envelope.
+        # Skip content headers, which belong to the source response body and
+        # are set for the envelope when it is rendered.
+        for key, value in headers.items():
+            if key.lower() in {"content-type", "content-length"}:
+                continue
+            response[key] = value
+    return response
 
 
 def build_error_json_response(
@@ -134,6 +162,8 @@ def get_error_message(exc: Exception, code: ErrorCode) -> str:
         return "Request validation failed."
     if isinstance(exc, exceptions.APIException):
         return str(exc.detail)
+    if code in CODE_DEFAULT_MESSAGES:
+        return CODE_DEFAULT_MESSAGES[code]
     return "Internal server error."
 
 
