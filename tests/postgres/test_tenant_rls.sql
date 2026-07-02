@@ -16,27 +16,27 @@ COMMIT;
 SET ROLE sgdypa_app;
 
 BEGIN;
-SELECT count(*) AS visible_without_org FROM sgdypa.rls_probe \gset
-\if :visible_without_org != 0
-    \echo 'RLS fail-closed invariant failed: rows visible without app.current_org'
-    \quit 1
+SELECT count(*) = 0 AS fail_closed_ok FROM sgdypa.rls_probe \gset
+\if :fail_closed_ok
+\else
+    DO $$ BEGIN RAISE EXCEPTION 'RLS fail-closed invariant failed: rows visible without app.current_org'; END $$;
 \endif
 COMMIT;
 
 BEGIN;
 SELECT sgdypa.set_current_organization('11111111-1111-1111-1111-111111111111');
-SELECT count(*) AS visible_for_org_a FROM sgdypa.rls_probe \gset
-\if :visible_for_org_a != 1
-    \echo 'RLS tenant invariant failed: org A should see exactly one row'
-    \quit 1
+SELECT count(*) = 1 AS tenant_visibility_ok FROM sgdypa.rls_probe \gset
+\if :tenant_visibility_ok
+\else
+    DO $$ BEGIN RAISE EXCEPTION 'RLS tenant invariant failed: org A should see exactly one row'; END $$;
 \endif
 COMMIT;
 
 BEGIN;
-SELECT count(*) AS visible_after_commit FROM sgdypa.rls_probe \gset
-\if :visible_after_commit != 0
-    \echo 'RLS transaction GUC invariant failed: app.current_org leaked after commit'
-    \quit 1
+SELECT count(*) = 0 AS guc_transactional_ok FROM sgdypa.rls_probe \gset
+\if :guc_transactional_ok
+\else
+    DO $$ BEGIN RAISE EXCEPTION 'RLS transaction GUC invariant failed: app.current_org leaked after commit'; END $$;
 \endif
 COMMIT;
 
@@ -50,15 +50,15 @@ CREATE TABLE sgdypa.trail_entry (
 );
 SELECT sgdypa.enable_organization_rls('sgdypa.trail_entry'::regclass);
 SELECT sgdypa.grant_trail_entry_append_only();
-SELECT has_table_privilege('sgdypa_app', 'sgdypa.trail_entry', 'UPDATE') AS app_can_update_trail \gset
-SELECT has_table_privilege('sgdypa_app', 'sgdypa.trail_entry', 'DELETE') AS app_can_delete_trail \gset
-\if :app_can_update_trail != false
-    \echo 'Trail append-only invariant failed: sgdypa_app has UPDATE on trail_entry'
-    \quit 1
+SELECT NOT has_table_privilege('sgdypa_app', 'sgdypa.trail_entry', 'UPDATE') AS trail_no_update_ok \gset
+SELECT NOT has_table_privilege('sgdypa_app', 'sgdypa.trail_entry', 'DELETE') AS trail_no_delete_ok \gset
+\if :trail_no_update_ok
+\else
+    DO $$ BEGIN RAISE EXCEPTION 'Trail append-only invariant failed: sgdypa_app has UPDATE on trail_entry'; END $$;
 \endif
-\if :app_can_delete_trail != false
-    \echo 'Trail append-only invariant failed: sgdypa_app has DELETE on trail_entry'
-    \quit 1
+\if :trail_no_delete_ok
+\else
+    DO $$ BEGIN RAISE EXCEPTION 'Trail append-only invariant failed: sgdypa_app has DELETE on trail_entry'; END $$;
 \endif
 ROLLBACK;
 
