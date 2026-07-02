@@ -5,6 +5,7 @@ description = "Backend para el Software de Gestion Documental y Procesos de Audi
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "celery[redis]>=5.4,<6.0",
     "django>=5.0,<6.0",
 ]
 
@@ -13,8 +14,14 @@ dev = [
     "black>=24.0",
     "mypy>=1.10",
     "pre-commit>=3.7",
+    "pytest>=8.2",
+    "pytest-django>=4.8",
     "ruff>=0.5",
 ]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.dev"
+python_files = ["test_*.py", "*_test.py"]
 
 [tool.black]
 line-length = 88
@@ -34,7 +41,7 @@ python_version = "3.12"
 plugins = []
 strict = true
 disallow_subclassing_any = false
-mypy_path = ["apps", "config"]
+mypy_path = ["."]
 exclude = ["docs/SGDyPA-docs/.git"]
 
 [[tool.mypy.overrides]]
