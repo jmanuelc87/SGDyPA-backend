@@ -39,3 +39,23 @@ El repositorio incluye configuración de pre-commit con Ruff, Black y mypy.
 pre-commit install
 pre-commit run --all-files
 ```
+
+## Entorno local con Docker Compose
+
+El entorno de desarrollo levanta en un solo comando los servicios base del stack documentado en `docs/SGDyPA-docs/stack-tecnologico-sgd.md`: PostgreSQL 16 con pgvector, Keycloak 26.x, MinIO con Object Lock, Redis y Apache Tika.
+
+```bash
+docker compose up -d
+```
+
+Servicios expuestos por defecto:
+
+| Servicio | URL / puerto | Seed mínimo |
+| --- | --- | --- |
+| PostgreSQL + pgvector | `localhost:5432` (`sgdypa` / `sgdypa_dev_password`) | Extensión `vector`, schema `sgdypa` y tabla `sgdypa.dev_seed`. |
+| Keycloak 26.x | `http://localhost:8080` (`admin` / `admin`) | Realm `sgdypa`, cliente público `sgdypa-spa` con PKCE y usuario `dev-admin` / `dev-admin`. |
+| MinIO Object Lock | API `http://localhost:9000`, consola `http://localhost:9001` (`minioadmin` / `minioadmin`) | Bucket `sgdypa-documents` creado con Object Lock, versioning y retención compliance de 30 días. |
+| Redis | `localhost:6379` | AOF habilitado para desarrollo. |
+| Apache Tika | `http://localhost:9998` | Imagen full con OCR/Tesseract disponible para el pipeline de extracción. |
+
+Las variables de puertos y credenciales se pueden sobrescribir con variables de entorno (`POSTGRES_PORT`, `KEYCLOAK_PORT`, `MINIO_*`, `REDIS_PORT`, `TIKA_PORT`) antes de ejecutar Compose. Los datos persistentes viven en volúmenes Docker nombrados; para reiniciar desde cero usa `docker compose down -v`.
