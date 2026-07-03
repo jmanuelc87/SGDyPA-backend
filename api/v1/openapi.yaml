@@ -1,0 +1,279 @@
+openapi: 3.1.0
+info:
+  title: SGDyPA Backend API
+  version: 0.1.0
+  summary: Contract-first API surface for the SGDyPA SPA and trusted integrations.
+  description: |
+    Versioned OpenAPI contract for `/api/v1/`. New endpoints must update this
+    file in the same pull request as their implementation.
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: /api/v1
+    description: Versioned API root
+security:
+  - bearerJwt: []
+tags:
+  - name: Platform
+    description: Platform-level health and asynchronous job primitives.
+  - name: Webhooks
+    description: Inbound integrations authenticated by webhook signatures.
+paths:
+  /health-checks:
+    get:
+      tags: [Platform]
+      operationId: getHealthCheck
+      summary: Check API availability.
+      security: []
+      responses:
+        '200':
+          description: API is available.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthCheck'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /platform/async-jobs:
+    post:
+      tags: [Platform]
+      operationId: createAsyncJob
+      summary: Enqueue an idempotent asynchronous platform job.
+      description: |
+        Baseline async primitive for deferred API operations. Mutating callers
+        must provide a stable `Idempotency-Key` UUID so retries do not duplicate
+        the operation.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AsyncJobCreateRequest'
+      responses:
+        '202':
+          description: Job accepted or previously accepted for the same idempotency key.
+          headers:
+            Location:
+              description: Absolute URL for polling the job status.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncJob'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /platform/async-jobs/{job_id}:
+    get:
+      tags: [Platform]
+      operationId: getAsyncJob
+      summary: Poll an asynchronous platform job.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current job status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncJob'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /webhooks/documenso:
+    post:
+      tags: [Webhooks]
+      operationId: receiveDocumensoWebhook
+      summary: Receive Documenso signature-completed events.
+      description: |
+        Webhook ingress authenticated with an HMAC signature instead of a bearer
+        JWT. Processing must be idempotent by provider event id and acknowledge
+        quickly before deferred work updates signatures, document versions, and trail entries.
+      security:
+        - webhookSignature: []
+      parameters:
+        - $ref: '#/components/parameters/WebhookSignatureHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '202':
+          description: Event accepted for processing.
+        '204':
+          description: Duplicate event already processed or acknowledged.
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+components:
+  securitySchemes:
+    bearerJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Keycloak-issued access token validated by the API.
+    webhookSignature:
+      type: apiKey
+      in: header
+      name: X-Webhook-Signature
+      description: HMAC signature for trusted inbound webhooks.
+  parameters:
+    OrganizationIdHeader:
+      name: X-Organization-Id
+      in: header
+      required: true
+      description: Active organization scope validated against the caller memberships.
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable UUID used to make mutating requests retry-safe.
+      schema:
+        type: string
+        format: uuid
+    WebhookSignatureHeader:
+      name: X-Webhook-Signature
+      in: header
+      required: true
+      description: Hex/base64 HMAC signature over the raw webhook payload.
+      schema:
+        type: string
+        minLength: 32
+  responses:
+    ErrorResponse:
+      description: Stable API error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    HealthCheck:
+      type: object
+      required: [status, checked_at]
+      properties:
+        status:
+          type: string
+          const: ok
+        checked_at:
+          type: string
+          format: date-time
+    AsyncJobStatus:
+      type: string
+      enum: [pending, running, completed, failed]
+    AsyncJobCreateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        operation:
+          type: string
+          default: platform.noop
+          minLength: 1
+    AsyncJob:
+      type: object
+      required: [id, operation, status, task_id, result, error, created_at, updated_at, completed_at, url]
+      properties:
+        id:
+          type: string
+          format: uuid
+        operation:
+          type: string
+        status:
+          $ref: '#/components/schemas/AsyncJobStatus'
+        task_id:
+          type: [string, 'null']
+        result:
+          type: [object, 'null']
+          additionalProperties: true
+        error:
+          type: [object, 'null']
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        url:
+          type: string
+          format: uri
+    ErrorCode:
+      type: string
+      enum:
+        - scope_frozen
+        - illegal_transition
+        - legal_hold_active
+        - self_approval_forbidden
+        - validation_failed
+        - stale_state
+        - idempotency_key_required
+        - idempotency_key_invalid
+        - idempotency_key_conflict
+        - authentication_failed
+        - not_authenticated
+        - not_found
+        - method_not_allowed
+        - permission_denied
+        - parse_error
+        - throttled
+        - unsupported_media_type
+        - internal_error
+    ErrorDetail:
+      type: object
+      additionalProperties: true
+      properties:
+        field:
+          type: string
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, details]
+          properties:
+            code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/ErrorDetail'

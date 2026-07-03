@@ -1,0 +1,12 @@
+{
+  "name": "sgdypa-backend-api-contract",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "generate:api-types": "npx --yes openapi-typescript@7.8.0 api/v1/openapi.yaml -o api/v1/generated/types.ts",
+    "check:api-types": "npm run generate:api-types -- --check"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.8.0"
+  }
+}
