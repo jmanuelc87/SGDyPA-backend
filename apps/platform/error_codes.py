@@ -8,6 +8,9 @@ class ErrorCode(StrEnum):
     SELF_APPROVAL_FORBIDDEN = "self_approval_forbidden"
     VALIDATION_FAILED = "validation_failed"
     STALE_STATE = "stale_state"
+    IDEMPOTENCY_KEY_REQUIRED = "idempotency_key_required"
+    IDEMPOTENCY_KEY_INVALID = "idempotency_key_invalid"
+    IDEMPOTENCY_KEY_CONFLICT = "idempotency_key_conflict"
 
     AUTHENTICATION_FAILED = "authentication_failed"
     NOT_AUTHENTICATED = "not_authenticated"
