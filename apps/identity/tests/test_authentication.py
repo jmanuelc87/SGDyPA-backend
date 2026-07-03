@@ -43,6 +43,8 @@ def encode_token(
         "email": "current@example.com",
         "given_name": "Current",
         "family_name": "User",
+        "email_verified": True,
+        "name": "Current User",
     }
     claims.update(overrides)
     return jwt.encode(
@@ -136,6 +138,8 @@ class KeycloakBearerAuthenticationMiddlewareTests(TestCase):
         self.assertEqual(response_data["user_id"], user.id)
         self.assertEqual(response_data["sub"], "kc-sub-1")
         self.assertEqual(user.email, "current@example.com")
+        self.assertIs(user.email_verified, True)
+        self.assertEqual(user.display_name, "Current User")
 
     def test_unknown_sub_is_rejected_even_when_email_matches_existing_user(
         self,

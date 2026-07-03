@@ -145,6 +145,16 @@ def sync_user_projection(user: Any, claims: dict[str, Any]) -> None:
             user.last_name = last_name
             update_fields.append("last_name")
 
+        email_verified = claims.get("email_verified")
+        if isinstance(email_verified, bool) and user.email_verified != email_verified:
+            user.email_verified = email_verified
+            update_fields.append("email_verified")
+
+        display_name = claims.get("name")
+        if isinstance(display_name, str) and user.display_name != display_name:
+            user.display_name = display_name
+            update_fields.append("display_name")
+
         if update_fields:
             user.save(update_fields=update_fields)
 
