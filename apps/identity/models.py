@@ -54,8 +54,10 @@ class User(AbstractUser):
 class MembershipQuerySet(models.QuerySet):
     def active(self) -> models.QuerySet:
         now = timezone.now()
-        return self.filter(status=Membership.Status.ACTIVE).filter(
-            models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=now)
+        return (
+            self.filter(status=Membership.Status.ACTIVE)
+            .filter(organization__is_active=True)
+            .filter(models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=now))
         )
 
     def invited(self) -> models.QuerySet:

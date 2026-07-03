@@ -48,6 +48,17 @@ class IdentityModelTests(TestCase):
         self.assertEqual(membership.expires_at, expires_at)
         self.assertEqual(Membership.objects.invited().count(), 1)
 
+    def test_inactive_organization_does_not_authorize_tenant_access(self) -> None:
+        Membership.objects.create(
+            organization=self.organization,
+            user=self.user,
+            status=Membership.Status.ACTIVE,
+        )
+        self.organization.is_active = False
+        self.organization.save(update_fields=["is_active"])
+
+        self.assertFalse(self.user.has_organization_membership(self.organization.id))
+
     def test_expired_membership_does_not_authorize_tenant_access(self) -> None:
         Membership.objects.create(
             organization=self.organization,
