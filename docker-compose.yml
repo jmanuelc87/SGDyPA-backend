@@ -45,7 +45,7 @@ services:
       start_period: 30s
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2026-06-13T11-33-47Z
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: sgdypa-minio
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -64,7 +64,7 @@ services:
       start_period: 10s
 
   minio-seed:
-    image: quay.io/minio/mc:RELEASE.2026-06-13T11-33-47Z
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: sgdypa-minio-seed
     depends_on:
       minio:
