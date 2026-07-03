@@ -13,14 +13,16 @@ class AsyncJobApiTests(TestCase):
             "/api/v1/platform/async-jobs",
             data=json.dumps({"operation": "documents.reindex"}),
             content_type="application/json",
-            headers={"Idempotency-Key": "reindex-doc-version-1"},
+            headers={"Idempotency-Key": "9d0e7f7f-99e8-4b07-a6a0-cab5727e2f0d"},
         )
 
         self.assertEqual(response.status_code, 202)
         payload = response.json()
         self.assertEqual(payload["operation"], "documents.reindex")
         self.assertEqual(payload["status"], AsyncJob.Status.COMPLETED)
-        self.assertTrue(payload["url"].endswith(f"/api/v1/platform/async-jobs/{payload['id']}"))
+        self.assertTrue(
+            payload["url"].endswith(f"/api/v1/platform/async-jobs/{payload['id']}")
+        )
 
         poll_response = client.get(payload["url"])
         self.assertEqual(poll_response.status_code, 200)
@@ -29,7 +31,7 @@ class AsyncJobApiTests(TestCase):
 
     def test_idempotency_key_reuses_existing_job(self) -> None:
         client = Client()
-        headers = {"Idempotency-Key": "stable-operation-key"}
+        headers = {"Idempotency-Key": "1a7f71a8-50e4-48b2-b7f6-485a6965ab0d"}
 
         first = client.post(
             "/api/v1/platform/async-jobs",
@@ -47,6 +49,39 @@ class AsyncJobApiTests(TestCase):
         self.assertEqual(first.status_code, 202)
         self.assertEqual(second.status_code, 202)
         self.assertEqual(first.json()["id"], second.json()["id"])
+        self.assertEqual(AsyncJob.objects.count(), 1)
+
+    def test_idempotency_key_must_be_uuid(self) -> None:
+        response = Client().post(
+            "/api/v1/platform/async-jobs",
+            data=json.dumps({"operation": "signature.start"}),
+            content_type="application/json",
+            headers={"Idempotency-Key": "not-a-uuid"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "idempotency_key_invalid")
+
+    def test_idempotency_replay_returns_same_response_without_reexecuting(self) -> None:
+        client = Client()
+        headers = {"Idempotency-Key": "19cd67d4-e658-4f18-9b42-d02ff6a037a9"}
+
+        first = client.post(
+            "/api/v1/platform/async-jobs",
+            data=json.dumps({"operation": "signature.start"}),
+            content_type="application/json",
+            headers=headers,
+        )
+        second = client.post(
+            "/api/v1/platform/async-jobs",
+            data=json.dumps({"operation": "documents.reindex"}),
+            content_type="application/json",
+            headers=headers,
+        )
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 202)
+        self.assertEqual(first.json(), second.json())
         self.assertEqual(AsyncJob.objects.count(), 1)
 
     def test_idempotency_key_is_required(self) -> None:

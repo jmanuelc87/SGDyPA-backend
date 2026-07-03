@@ -8,6 +8,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.platform.idempotency import require_idempotency_key
 from apps.platform.models import AsyncJob
 from apps.platform.tasks import complete_async_job
 
@@ -47,16 +48,12 @@ def _job_payload(request: HttpRequest, job: AsyncJob) -> dict[str, Any]:
     }
 
 
+@require_idempotency_key
 def async_job_create(request: HttpRequest) -> JsonResponse:
     if request.method != "POST":
         return JsonResponse({"error": {"code": "method_not_allowed"}}, status=405)
 
-    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
-    if not idempotency_key:
-        return JsonResponse(
-            {"error": {"code": "idempotency_key_required"}},
-            status=400,
-        )
+    idempotency_key = request.headers["Idempotency-Key"].strip()
 
     body = json.loads(request.body or b"{}")
     operation = str(body.get("operation") or "platform.noop")

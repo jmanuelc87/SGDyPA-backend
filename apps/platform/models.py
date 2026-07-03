@@ -4,6 +4,19 @@ from django.db import models
 from django.utils import timezone
 
 
+class IdempotencyRecord(models.Model):
+    key = models.UUIDField(primary_key=True, editable=False)
+    method = models.CharField(max_length=10)
+    path = models.CharField(max_length=500)
+    status_code = models.PositiveSmallIntegerField(default=200)
+    response_body = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class AsyncJob(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pendiente"
