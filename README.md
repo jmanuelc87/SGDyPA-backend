@@ -67,6 +67,45 @@ Servicios expuestos por defecto:
 
 Las variables de puertos y credenciales se pueden sobrescribir con variables de entorno (`POSTGRES_PORT`, `KEYCLOAK_PORT`, `MINIO_*`, `REDIS_PORT`, `TIKA_PORT`) antes de ejecutar Compose. Los datos persistentes viven en volúmenes Docker nombrados; para reiniciar desde cero usa `docker compose down -v`.
 
+## Ejecutar la aplicación
+
+La aplicación Django corre en el host; los servicios de soporte (PostgreSQL, Keycloak, MinIO, Redis, Tika, Celery) corren en Docker Compose. El proyecto usa [`uv`](https://docs.astral.sh/uv/) con Python 3.12 (fijado en `.python-version`) y por defecto carga `config.settings.dev`.
+
+1. **Levantar los servicios de soporte** y esperar a que estén sanos:
+
+   ```bash
+   docker compose up -d
+   docker compose ps
+   ```
+
+2. **Instalar dependencias** desde `uv.lock`:
+
+   ```bash
+   uv sync
+   ```
+
+3. **Aplicar migraciones** (crea el schema; ver el bootstrap de RLS por tenant más arriba):
+
+   ```bash
+   uv run python manage.py migrate
+   ```
+
+4. **Arrancar el servidor de desarrollo**:
+
+   ```bash
+   uv run python manage.py runserver
+   ```
+
+   La API queda disponible en `http://localhost:8000/api/v1/`.
+
+5. **Verificar** con el endpoint de salud, que es el único público (`security: []` en el contrato):
+
+   ```bash
+   curl http://localhost:8000/api/v1/health-checks
+   ```
+
+Para otro entorno, fija `DJANGO_SETTINGS_MODULE` explícitamente (por ejemplo `DJANGO_SETTINGS_MODULE=config.settings.stage`). El resto de endpoints requiere un bearer token de Keycloak y, para recursos de dominio, el header `X-Organization-Id`.
+
 ## Jobs asíncronos
 
 Celery usa Redis como broker y result backend por defecto (`redis://localhost:6379/0`). En Compose, `celery-worker` ejecuta las tareas encoladas y `celery-beat` queda listo para tareas programadas.
@@ -89,3 +128,24 @@ El backend valida los access tokens de Keycloak con estas variables de entorno:
 | `KEYCLOAK_OIDC_ALGORITHMS` | `RS256` | Algoritmos de firma aceptados (lista separada por comas). |
 
 El realm importado ya alinea el token emitido con esta validación: el cliente público `sgdypa-spa` incluye un mapper de audiencia que añade `sgdypa-api` al access token, y `sgdypa-api` existe como cliente bearer-only que representa al recurso.
+
+### Configuración del cliente frontend (SPA)
+
+El realm seed ya deja provisionado el cliente que consume la SPA. **La SPA vive en un repositorio aparte**; aquí solo se configura Keycloak para que ese frontend pueda autenticarse. El cliente debe usar estos valores (definidos en `docker/keycloak/sgdypa-realm.json`):
+
+| Parámetro | Valor de desarrollo | Descripción |
+| --- | --- | --- |
+| Client ID | `sgdypa-spa` | Cliente público (sin secreto) para el navegador. |
+| Flujo | Authorization Code + PKCE (`S256`) | `standardFlowEnabled`; método de challenge `pkce.code.challenge.method=S256`. |
+| Issuer | `http://localhost:8080/realms/sgdypa` | Emisor del realm; base para los endpoints OIDC. |
+| Redirect URIs | `http://localhost:5173/*`, `http://127.0.0.1:5173/*` | Puerto por defecto de Vite. |
+| Web Origins (CORS) | `http://localhost:5173`, `http://127.0.0.1:5173` | Orígenes permitidos para el intercambio de tokens. |
+| Audiencia emitida | `sgdypa-api` | El mapper `sgdypa-api-audience` añade `sgdypa-api` al `aud` del access token, que es lo que exige el backend. |
+| Usuario de prueba | `dev-admin` / `dev-admin` | Usuario seed del realm para login local. |
+
+Flujo de extremo a extremo: la SPA inicia sesión contra Keycloak con Authorization Code + PKCE, obtiene un access token con `aud = sgdypa-api` y llama al backend en `http://localhost:8000/api/v1/` con `Authorization: Bearer <token>`. Solo `GET /api/v1/health-checks` es público; el resto de endpoints requiere el token y, para recursos de dominio, el header `X-Organization-Id`.
+
+Notas operativas:
+
+- Si la SPA no corre en el puerto `5173`, agrega su URL a `redirectUris` y `webOrigins` del cliente `sgdypa-spa` en `docker/keycloak/sgdypa-realm.json`; de lo contrario Keycloak rechaza el login con `Invalid redirect_uri`.
+- El realm se importa en el primer arranque de Keycloak. Tras editar el JSON del realm, vuelve a importarlo o reinicia desde cero con `docker compose down -v` para re-sembrar.
