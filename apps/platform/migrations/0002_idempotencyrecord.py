@@ -13,9 +13,16 @@ class Migration(migrations.Migration):
             name="IdempotencyRecord",
             fields=[
                 (
-                    "key",
-                    models.UUIDField(editable=False, primary_key=True, serialize=False),
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
                 ),
+                ("key", models.UUIDField(editable=False)),
+                ("organization_id", models.UUIDField(editable=False)),
                 ("method", models.CharField(max_length=10)),
                 ("path", models.CharField(max_length=500)),
                 ("status_code", models.PositiveSmallIntegerField(default=200)),
@@ -24,5 +31,12 @@ class Migration(migrations.Migration):
                 ("updated_at", models.DateTimeField(auto_now=True)),
             ],
             options={"ordering": ["-created_at"]},
+        ),
+        migrations.AddConstraint(
+            model_name="idempotencyrecord",
+            constraint=models.UniqueConstraint(
+                fields=("organization_id", "key"),
+                name="uniq_idempotency_org_key",
+            ),
         ),
     ]

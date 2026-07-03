@@ -14,9 +14,21 @@ _current_organization: ContextVar[UUID | None] = ContextVar(
     default=None,
 )
 
+# Sentinel scope for requests without a tenant context (tenant-agnostic
+# endpoints). Stored instead of NULL so tenant-scoped unique constraints enforce
+# idempotency identically on every backend — a NULL organization_id would make
+# each row distinct and defeat deduplication/replay.
+NO_ORGANIZATION: UUID = UUID(int=0)
+
 
 def get_current_organization_id() -> UUID | None:
     return _current_organization.get()
+
+
+def get_current_organization_scope() -> UUID:
+    """Active organization id, or the tenant-agnostic sentinel when unset."""
+
+    return _current_organization.get() or NO_ORGANIZATION
 
 
 @contextmanager

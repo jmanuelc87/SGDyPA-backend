@@ -12,6 +12,7 @@ from django.http import HttpRequest, JsonResponse
 from apps.platform.api_errors import build_error_json_response
 from apps.platform.error_codes import ErrorCode
 from apps.platform.models import IdempotencyRecord
+from apps.platform.tenancy import get_current_organization_scope
 
 P = ParamSpec("P")
 R = TypeVar("R", bound=JsonResponse)
@@ -53,14 +54,32 @@ def require_idempotency_key(view_func: Callable[P, R]) -> Callable[P, JsonRespon
                 request=request,
             )
 
+        organization_id = get_current_organization_scope()
+
         with transaction.atomic():
             record, created = (
                 IdempotencyRecord.objects.select_for_update().get_or_create(
+                    organization_id=organization_id,
                     key=idempotency_key,
                     defaults={"method": request.method, "path": request.path},
                 )
             )
             if not created:
+                # An Idempotency-Key is scoped to the request it was first used
+                # for. Replaying it against a different endpoint (or method) must
+                # not return the unrelated stored response, so reject the reuse
+                # instead of silently serving the wrong resource.
+                if record.method != request.method or record.path != request.path:
+                    return build_error_json_response(
+                        code=ErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+                        message=(
+                            "Idempotency-Key was already used for a different "
+                            "request."
+                        ),
+                        details=[],
+                        status_code=409,
+                        request=request,
+                    )
                 return JsonResponse(record.response_body, status=record.status_code)
 
             response = view_func(request, *args, **kwargs)

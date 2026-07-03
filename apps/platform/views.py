@@ -1,6 +1,8 @@
 import json
+import uuid
 from typing import Any
 
+from django.db import transaction
 from django.http import HttpRequest, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
@@ -11,6 +13,7 @@ from rest_framework.views import APIView
 from apps.platform.idempotency import require_idempotency_key
 from apps.platform.models import AsyncJob
 from apps.platform.tasks import complete_async_job
+from apps.platform.tenancy import get_current_organization_scope
 
 
 class HealthCheckView(APIView):
@@ -58,19 +61,30 @@ def async_job_create(request: HttpRequest) -> JsonResponse:
     body = json.loads(request.body or b"{}")
     operation = str(body.get("operation") or "platform.noop")
     job, created = AsyncJob.objects.get_or_create(
+        organization_id=get_current_organization_scope(),
         idempotency_key=idempotency_key,
         defaults={"operation": operation},
     )
 
     if created:
-        async_result = complete_async_job.apply_async(
-            kwargs={
-                "job_id": str(job.id),
-                "idempotency_key": idempotency_key,
-                "result": {"operation": operation},
-            }
+        # Dispatch only after the surrounding transaction commits: the
+        # require_idempotency_key decorator runs this view inside
+        # transaction.atomic(), so enqueuing eagerly would let a worker pick up
+        # the task and query the not-yet-committed AsyncJob row (DoesNotExist,
+        # which the task does not retry on). Pre-generate the Celery task id so
+        # it can be persisted and returned before the enqueue happens.
+        task_id = str(uuid.uuid4())
+        transaction.on_commit(
+            lambda: complete_async_job.apply_async(
+                kwargs={
+                    "job_id": str(job.id),
+                    "idempotency_key": idempotency_key,
+                    "result": {"operation": operation},
+                },
+                task_id=task_id,
+            )
         )
-        job.task_id = async_result.id or ""
+        job.task_id = task_id
         job.save(update_fields=["task_id", "updated_at"])
         job.refresh_from_db()
 
