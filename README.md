@@ -141,7 +141,7 @@ El realm seed ya deja provisionado el cliente que consume la SPA. **La SPA vive 
 | Redirect URIs | `http://localhost:5173/*`, `http://127.0.0.1:5173/*` | Puerto por defecto de Vite. |
 | Web Origins (CORS) | `http://localhost:5173`, `http://127.0.0.1:5173` | Orígenes permitidos para el intercambio de tokens. |
 | Audiencia emitida | `sgdypa-api` | El mapper `sgdypa-api-audience` añade `sgdypa-api` al `aud` del access token, que es lo que exige el backend. |
-| Usuario de prueba | `dev-admin` / `dev-admin` | Usuario seed del realm para login local. |
+| Usuario de prueba | `dev-admin` / `dev-admin` (email `dev-admin@sgdypa.local`) | Usuario seed del realm para login local; sembrado en `docker/keycloak/sgdypa-realm.json` con `emailVerified: true` y contraseña no temporal, por lo que la SPA puede iniciar sesión directamente sin cambio de contraseña. Acepta como identificador tanto el username como el email. |
 
 Flujo de extremo a extremo: la SPA inicia sesión contra Keycloak con Authorization Code + PKCE, obtiene un access token con `aud = sgdypa-api` y llama al backend en `http://localhost:8000/api/v1/` con `Authorization: Bearer <token>`. Solo `GET /api/v1/health-checks` es público; el resto de endpoints requiere el token y, para recursos de dominio, el header `X-Organization-Id`.
 
