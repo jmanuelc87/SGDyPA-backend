@@ -64,6 +64,40 @@ class MembershipQuerySet(models.QuerySet):
         return self.filter(status=Membership.Status.INVITED)
 
 
+class Role(models.Model):
+    class SystemRole(models.TextChoices):
+        P1 = "P1", "Auditor Líder"
+        P2 = "P2", "Auditor"
+        P3 = "P3", "Auditado"
+        P4 = "P4", "Gestor Documental"
+        P5 = "P5", "Responsable de Programa"
+        P6 = "P6", "Administrador del Tenant"
+        P7 = "P7", "Auditor Externo"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code = models.CharField(
+        max_length=20,
+        choices=SystemRole.choices,
+        unique=True,
+        help_text="Stable P1-P7 system role code.",
+    )
+    name = models.CharField(max_length=120)
+    capabilities = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Read-only system capability slugs enforced server-side.",
+    )
+    is_system = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["code"]
+
+    def __str__(self) -> str:
+        return f"{self.code} · {self.name}"
+
+
 class Membership(models.Model):
     class Status(models.TextChoices):
         INVITED = "invited", "Invitada"
@@ -103,6 +137,12 @@ class Membership(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     objects = MembershipQuerySet.as_manager()
+    roles = models.ManyToManyField(
+        Role,
+        through="MembershipRole",
+        related_name="memberships",
+        blank=True,
+    )
 
     class Meta:
         ordering = ["organization_id", "user_id"]
@@ -113,5 +153,40 @@ class Membership(models.Model):
             )
         ]
 
+    @property
+    def is_active(self) -> bool:
+        if self.status != self.Status.ACTIVE:
+            return False
+        if not self.organization.is_active:
+            return False
+        return self.expires_at is None or self.expires_at > timezone.now()
+
     def __str__(self) -> str:
         return f"{self.user_id}@{self.organization_id}"
+
+
+class MembershipRole(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    membership = models.ForeignKey(
+        Membership,
+        on_delete=models.CASCADE,
+        related_name="role_assignments",
+    )
+    role = models.ForeignKey(
+        Role,
+        on_delete=models.PROTECT,
+        related_name="membership_assignments",
+    )
+    assigned_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["membership_id", "role__code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["membership", "role"],
+                name="uniq_membership_role",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.membership_id}:{self.role.code}"
