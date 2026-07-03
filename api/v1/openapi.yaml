@@ -15,8 +15,6 @@ security:
 tags:
   - name: Platform
     description: Platform-level health and asynchronous job primitives.
-  - name: Webhooks
-    description: Inbound integrations authenticated by webhook signatures.
 paths:
   /health-checks:
     get:
@@ -102,35 +100,6 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         default:
           $ref: '#/components/responses/ErrorResponse'
-  /webhooks/documenso:
-    post:
-      tags: [Webhooks]
-      operationId: receiveDocumensoWebhook
-      summary: Receive Documenso signature-completed events.
-      description: |
-        Webhook ingress authenticated with an HMAC signature instead of a bearer
-        JWT. Processing must be idempotent by provider event id and acknowledge
-        quickly before deferred work updates signatures, document versions, and trail entries.
-      security:
-        - webhookSignature: []
-      parameters:
-        - $ref: '#/components/parameters/WebhookSignatureHeader'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '202':
-          description: Event accepted for processing.
-        '204':
-          description: Duplicate event already processed or acknowledged.
-        '401':
-          $ref: '#/components/responses/ErrorResponse'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
 components:
   securitySchemes:
     bearerJwt:
@@ -138,11 +107,6 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Keycloak-issued access token validated by the API.
-    webhookSignature:
-      type: apiKey
-      in: header
-      name: X-Webhook-Signature
-      description: HMAC signature for trusted inbound webhooks.
   parameters:
     OrganizationIdHeader:
       name: X-Organization-Id
@@ -160,14 +124,6 @@ components:
       schema:
         type: string
         format: uuid
-    WebhookSignatureHeader:
-      name: X-Webhook-Signature
-      in: header
-      required: true
-      description: Hex/base64 HMAC signature over the raw webhook payload.
-      schema:
-        type: string
-        minLength: 32
   responses:
     ErrorResponse:
       description: Stable API error envelope.
@@ -188,7 +144,7 @@ components:
           format: date-time
     AsyncJobStatus:
       type: string
-      enum: [pending, running, completed, failed]
+      enum: [pending, started, completed, failed]
     AsyncJobCreateRequest:
       type: object
       additionalProperties: false
@@ -214,8 +170,8 @@ components:
           type: [object, 'null']
           additionalProperties: true
         error:
-          type: [object, 'null']
-          additionalProperties: true
+          type: string
+          description: Failure detail; empty string when the job has not failed.
         created_at:
           type: string
           format: date-time
@@ -259,6 +215,17 @@ components:
           $ref: '#/components/schemas/ErrorCode'
         message:
           type: string
+    ErrorDetails:
+      description: >-
+        Error context. An array of ErrorDetail entries for most errors, or a
+        map of field name to validation messages for validation_failed
+        responses.
+      oneOf:
+        - type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+        - type: object
+          additionalProperties: true
     ErrorEnvelope:
       type: object
       additionalProperties: false
@@ -267,13 +234,14 @@ components:
         error:
           type: object
           additionalProperties: false
-          required: [code, message, details]
+          required: [code, message, details, request_id]
           properties:
             code:
               $ref: '#/components/schemas/ErrorCode'
             message:
               type: string
+            request_id:
+              type: string
+              description: Correlation id echoed from the X-Request-Id middleware.
             details:
-              type: array
-              items:
-                $ref: '#/components/schemas/ErrorDetail'
+              $ref: '#/components/schemas/ErrorDetails'
