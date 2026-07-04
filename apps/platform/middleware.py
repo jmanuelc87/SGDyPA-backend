@@ -17,13 +17,12 @@ ORGANIZATION_HEADER = "X-Organization-Id"
 # Routes that run before the client has selected an active organization, or that
 # are inherently tenant-agnostic. These must not require the X-Organization-Id
 # header. `/me` and `/organizations` are the SPA bootstrap/org-selector endpoints
-# the client hits to discover its memberships; `/admin` is cross-tenant.
+# the client hits to discover its memberships.
 EXEMPT_PATH_PREFIXES: tuple[str, ...] = (
     "/api/v1/me",
     "/api/v1/organizations",
     "/me",
     "/organizations",
-    "/admin",
 )
 
 

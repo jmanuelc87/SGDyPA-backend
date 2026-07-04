@@ -328,7 +328,7 @@ class TenantContextMiddlewareTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_bootstrap_routes_skip_header_requirement(self) -> None:
-        for exempt_path in ("/me", "/organizations", "/organizations/", "/admin/"):
+        for exempt_path in ("/me", "/organizations", "/organizations/"):
             with self.subTest(path=exempt_path):
                 request = self.factory.get(exempt_path)
                 request.user = FakeUser([ORG_A])
