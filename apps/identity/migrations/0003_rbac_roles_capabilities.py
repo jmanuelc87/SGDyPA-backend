@@ -31,7 +31,7 @@ def seed_system_roles(apps, schema_editor):
                 "read",
             ],
         ),
-        "P6": ("Administrador del Tenant", ["read"]),
+        "P6": ("Administrador del Tenant", ["manage_memberships", "read"]),
         "P7": ("Auditor Externo", ["read"]),
     }
     for code, (name, capabilities) in roles.items():

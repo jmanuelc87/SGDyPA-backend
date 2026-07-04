@@ -154,6 +154,10 @@ class Membership(models.Model):
         ]
 
     @property
+    def is_invited(self) -> bool:
+        return self.status == self.Status.INVITED
+
+    @property
     def is_active(self) -> bool:
         if self.status != self.Status.ACTIVE:
             return False

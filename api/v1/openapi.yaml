@@ -15,7 +15,204 @@ security:
 tags:
   - name: Platform
     description: Platform-level health and asynchronous job primitives.
+  - name: Identity
+    description: Identity bootstrap, tenant users, roles, and memberships.
 paths:
+  /me:
+    get:
+      tags: [Identity]
+      operationId: getMe
+      summary: Bootstrap the SPA with the caller profile, memberships, roles, and orgs.
+      responses:
+        '200':
+          description: Caller identity bootstrap.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /organizations:
+    get:
+      tags: [Identity]
+      operationId: listOrganizations
+      summary: List organizations where the caller has a membership.
+      responses:
+        '200':
+          description: Available organizations.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Organization'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /users:
+    get:
+      tags: [Identity]
+      operationId: listUsers
+      summary: List read-only user projections in the active organization.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+      responses:
+        '200':
+          description: User projections.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /users/{id}:
+    get:
+      tags: [Identity]
+      operationId: getUser
+      summary: Read a user projection in the active organization.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        '200':
+          description: User projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /roles:
+    get:
+      tags: [Identity]
+      operationId: listRoles
+      summary: List role definitions.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+      responses:
+        '200':
+          description: Roles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Role'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /roles/{id}:
+    get:
+      tags: [Identity]
+      operationId: getRole
+      summary: Read a role definition.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Role definition.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /memberships:
+    get:
+      tags: [Identity]
+      operationId: listMemberships
+      summary: List memberships in the active organization.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+      responses:
+        '200':
+          description: Memberships.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Membership'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [Identity]
+      operationId: inviteMembership
+      summary: Invite a projected user to the active organization.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MembershipWrite'
+      responses:
+        '201':
+          description: Membership invited.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /memberships/{id}/roles:
+    post:
+      tags: [Identity]
+      operationId: addMembershipRole
+      summary: Assign a role to a membership.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_id]
+              properties:
+                role_id: {type: string, format: uuid}
+      responses:
+        '201':
+          description: Role assignment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MembershipRole'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /memberships/{id}/roles/{role_id}:
+    delete:
+      tags: [Identity]
+      operationId: deleteMembershipRole
+      summary: Remove a role from a membership.
+      parameters:
+        - $ref: '#/components/parameters/OrganizationIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: role_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '204': {description: Role removed.}
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /health-checks:
     get:
       tags: [Platform]
@@ -184,6 +381,82 @@ components:
         url:
           type: string
           format: uri
+    Organization:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        slug: {type: string}
+        is_active: {type: boolean}
+    User:
+      type: object
+      properties:
+        id: {type: integer}
+        email: {type: string, format: email}
+        email_verified: {type: boolean}
+        display_name: {type: string}
+        first_name: {type: string}
+        last_name: {type: string}
+    Role:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        code: {type: string}
+        name: {type: string}
+        capabilities:
+          type: array
+          items: {type: string}
+        is_system: {type: boolean}
+    MembershipRole:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        role:
+          $ref: '#/components/schemas/Role'
+        assigned_at: {type: string, format: date-time}
+    Membership:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        organization:
+          $ref: '#/components/schemas/Organization'
+        user:
+          $ref: '#/components/schemas/User'
+        status: {type: string, enum: [invited, active, suspended, revoked]}
+        es_invitada: {type: boolean}
+        alcance: {type: object, additionalProperties: true}
+        expira_en: {type: [string, 'null'], format: date-time}
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+        invited_at: {type: string, format: date-time}
+        accepted_at: {type: [string, 'null'], format: date-time}
+    MembershipWrite:
+      type: object
+      required: [user_id]
+      properties:
+        user_id: {type: integer}
+        status: {type: string, enum: [invited, active, suspended, revoked]}
+        alcance: {type: object, additionalProperties: true}
+        expira_en: {type: [string, 'null'], format: date-time}
+    Me:
+      type: object
+      properties:
+        profile:
+          $ref: '#/components/schemas/User'
+        memberships:
+          type: array
+          items:
+            $ref: '#/components/schemas/Membership'
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+        orgs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Organization'
     ErrorCode:
       type: string
       enum:
