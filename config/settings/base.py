@@ -71,8 +71,8 @@ if DB_ENGINE in ("postgres", "postgresql", "django.db.backends.postgresql"):
         "default": {
             "ENGINE": "django.db.backends.postgresql",
             "NAME": os.environ.get("POSTGRES_DB", "sgdypa"),
-            "USER": os.environ.get("POSTGRES_USER", "postgres"),
-            "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
+            "USER": os.environ.get("POSTGRES_USER", "sgdypa"),
+            "PASSWORD": os.environ.get("POSTGRES_PASSWORD", "sgdypa_dev_password"),
             "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
             "PORT": os.environ.get("POSTGRES_PORT", "5432"),
             "CONN_MAX_AGE": int(os.environ.get("POSTGRES_CONN_MAX_AGE", "60")),
