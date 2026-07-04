@@ -104,22 +104,20 @@ paths:
                   $ref: '#/components/schemas/Role'
         default:
           $ref: '#/components/responses/ErrorResponse'
-    post:
+  /roles/{id}:
+    get:
       tags: [Identity]
-      operationId: createRole
-      summary: Create an org-scoped role definition.
+      operationId: getRole
+      summary: Read a role definition.
       parameters:
         - $ref: '#/components/parameters/OrganizationIdHeader'
-        - $ref: '#/components/parameters/IdempotencyKeyHeader'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RoleWrite'
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
       responses:
-        '201':
-          description: Role created.
+        '200':
+          description: Role definition.
           content:
             application/json:
               schema:
@@ -409,12 +407,6 @@ components:
           type: array
           items: {type: string}
         is_system: {type: boolean}
-    RoleWrite:
-      type: object
-      required: [code, name]
-      properties:
-        code: {type: string}
-        name: {type: string}
     MembershipRole:
       type: object
       properties:

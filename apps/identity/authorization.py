@@ -18,6 +18,7 @@ class Capability(StrEnum):
     VERIFY_CAPA_EFFECTIVENESS = "verify_capa_effectiveness"
     REQUEST_DISPOSITION = "request_disposition"
     APPROVE_DISPOSITION = "approve_disposition"
+    MANAGE_MEMBERSHIPS = "manage_memberships"
     READ = "read"
 
 
@@ -47,7 +48,7 @@ ROLE_CAPABILITIES: Final[dict[str, frozenset[Capability]]] = {
             Capability.READ,
         }
     ),
-    "P6": frozenset({Capability.READ}),
+    "P6": frozenset({Capability.MANAGE_MEMBERSHIPS, Capability.READ}),
     "P7": frozenset({Capability.READ}),
 }
 

@@ -46,7 +46,10 @@ class AuthorizationTests(TestCase):
         self.assertIn(
             Capability.COMMISSION_AUDIT, Role.objects.get(code="P5").capabilities
         )
-        self.assertEqual(Role.objects.get(code="P6").capabilities, [Capability.READ])
+        self.assertEqual(
+            Role.objects.get(code="P6").capabilities,
+            [Capability.MANAGE_MEMBERSHIPS, Capability.READ],
+        )
 
     def test_membership_role_assignment_and_revocation_are_org_scoped(self) -> None:
         p1 = Role.objects.get(code="P1")

@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import uuid
 
+from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.identity.authorization import assign_membership_role, revoke_membership_role
+from apps.identity.authorization import (
+    AuthorizationError,
+    Capability,
+    assign_membership_role,
+    require_capability,
+    revoke_membership_role,
+)
 from apps.identity.models import Membership, Organization, Role
 from apps.identity.serializers import (
     MembershipRoleSerializer,
@@ -52,6 +60,18 @@ class UserViewSet(
         )
 
 
+def require_org_capability(request, capability: Capability) -> None:
+    # Server-side RBAC gate for tenant mutations. The middleware has already
+    # verified the caller is a member of X-Organization-Id; this enforces that
+    # the member actually holds the capability, translating the domain
+    # AuthorizationError into a stable 403 envelope.
+    org_id = request.headers["X-Organization-Id"]
+    try:
+        require_capability(request.user, org_id, capability)
+    except AuthorizationError as exc:
+        raise PermissionDenied(str(exc)) from exc
+
+
 def require_idempotency_header(request) -> None:
     raw_key = request.headers.get("Idempotency-Key", "").strip()
     if not raw_key:
@@ -70,23 +90,20 @@ def require_idempotency_header(request) -> None:
 
 class RoleViewSet(
     mixins.ListModelMixin,
-    mixins.CreateModelMixin,
-    mixins.UpdateModelMixin,
+    mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
+    # Roles are the fixed P1-P7 system definitions with server-enforced,
+    # read-only capabilities; there is no tenant-scoped role authoring, so this
+    # viewset is read-only.
     serializer_class = RoleSerializer
     permission_classes = [IsAuthenticated]
     queryset = Role.objects.all()
-
-    def create(self, request, *args, **kwargs):
-        require_idempotency_header(request)
-        return super().create(request, *args, **kwargs)
 
 
 class MembershipViewSet(
     mixins.ListModelMixin,
     mixins.CreateModelMixin,
-    mixins.UpdateModelMixin,
     viewsets.GenericViewSet,
 ):
     serializer_class = MembershipSerializer
@@ -101,25 +118,38 @@ class MembershipViewSet(
         )
 
     def create(self, request, *args, **kwargs):
+        require_org_capability(request, Capability.MANAGE_MEMBERSHIPS)
         require_idempotency_header(request)
         return super().create(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="roles")
     def add_role(self, request, pk=None):
+        require_org_capability(request, Capability.MANAGE_MEMBERSHIPS)
         require_idempotency_header(request)
         membership = self.get_object()
         serializer = MembershipRoleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        assignment = assign_membership_role(
-            membership, serializer.validated_data["role"]
-        )
+        try:
+            assignment = assign_membership_role(
+                membership, serializer.validated_data["role"]
+            )
+        except AuthorizationError as exc:
+            raise PermissionDenied(str(exc)) from exc
         return Response(
             MembershipRoleSerializer(assignment).data, status=status.HTTP_201_CREATED
         )
 
-    @action(detail=True, methods=["delete"], url_path="roles/(?P<role_id>[^/.]+)")
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=(
+            r"roles/(?P<role_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+            r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+        ),
+    )
     def remove_role(self, request, pk=None, role_id=None):
+        require_org_capability(request, Capability.MANAGE_MEMBERSHIPS)
         membership = self.get_object()
-        role = Role.objects.get(pk=role_id)
+        role = get_object_or_404(Role, pk=role_id)
         revoke_membership_role(membership, role)
         return Response(status=status.HTTP_204_NO_CONTENT)

@@ -90,3 +90,92 @@ class IdentityAPITests(TestCase):
             HTTP_X_ORGANIZATION_ID=str(self.organization.id),
         )
         self.assertEqual(delete_response.status_code, 204)
+
+    def _active_member_client(self, *, role_code: str) -> tuple[APIClient, Membership]:
+        User = get_user_model()
+        member = User.objects.create_user(
+            username=f"member-{role_code}",
+            email=f"{role_code.lower()}@example.com",
+            keycloak_sub=f"kc-{role_code.lower()}",
+        )
+        membership = Membership.objects.create(
+            organization=self.organization,
+            user=member,
+            status=Membership.Status.ACTIVE,
+        )
+        assign_membership_role(membership, Role.objects.get(code=role_code))
+        client = APIClient()
+        client.force_authenticate(user=member)
+        return client, membership
+
+    def test_member_without_manage_capability_cannot_invite(self) -> None:
+        # P7 (Auditor Externo) is an active member but only holds `read`.
+        client, _ = self._active_member_client(role_code="P7")
+
+        response = client.post(
+            "/api/v1/memberships",
+            {"user_id": str(self.invited_user.id)},
+            format="json",
+            HTTP_X_ORGANIZATION_ID=str(self.organization.id),
+            HTTP_IDEMPOTENCY_KEY="33333333-3333-4333-8333-333333333333",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"]["code"], "permission_denied")
+        self.assertFalse(
+            Membership.objects.filter(
+                organization=self.organization, user=self.invited_user
+            ).exists()
+        )
+
+    def test_member_without_manage_capability_cannot_assign_role(self) -> None:
+        client, membership = self._active_member_client(role_code="P7")
+
+        response = client.post(
+            f"/api/v1/memberships/{membership.id}/roles",
+            {"role_id": str(Role.objects.get(code="P1").id)},
+            format="json",
+            HTTP_X_ORGANIZATION_ID=str(self.organization.id),
+            HTTP_IDEMPOTENCY_KEY="44444444-4444-4444-8444-444444444444",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"]["code"], "permission_denied")
+
+    def test_remove_unknown_role_returns_404_not_500(self) -> None:
+        response = self.client.delete(
+            f"/api/v1/memberships/{self.membership.id}/roles/"
+            "00000000-0000-4000-8000-000000000000",
+            HTTP_X_ORGANIZATION_ID=str(self.organization.id),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "not_found")
+
+    def test_duplicate_membership_invite_returns_400_not_500(self) -> None:
+        payload = {"user_id": str(self.invited_user.id)}
+        first = self.client.post(
+            "/api/v1/memberships",
+            payload,
+            format="json",
+            HTTP_X_ORGANIZATION_ID=str(self.organization.id),
+            HTTP_IDEMPOTENCY_KEY="55555555-5555-4555-8555-555555555555",
+        )
+        self.assertEqual(first.status_code, 201)
+
+        second = self.client.post(
+            "/api/v1/memberships",
+            payload,
+            format="json",
+            HTTP_X_ORGANIZATION_ID=str(self.organization.id),
+            HTTP_IDEMPOTENCY_KEY="66666666-6666-4666-8666-666666666666",
+        )
+
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(second.json()["error"]["code"], "validation_failed")
+        self.assertEqual(
+            Membership.objects.filter(
+                organization=self.organization, user=self.invited_user
+            ).count(),
+            1,
+        )

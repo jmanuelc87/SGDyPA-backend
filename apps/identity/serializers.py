@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from rest_framework import serializers
 
 from apps.identity.models import Membership, MembershipRole, Organization, Role
@@ -86,9 +87,25 @@ class MembershipSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context["request"]
-        validated_data["organization_id"] = request.headers["X-Organization-Id"]
+        organization_id = request.headers["X-Organization-Id"]
+        validated_data["organization_id"] = organization_id
         validated_data.setdefault("status", Membership.Status.INVITED)
-        return super().create(validated_data)
+        if Membership.objects.filter(
+            organization_id=organization_id, user=validated_data["user"]
+        ).exists():
+            raise serializers.ValidationError(
+                {"user_id": "This user already has a membership in the organization."}
+            )
+        try:
+            # Savepoint so a lost check-then-insert race against the
+            # (organization, user) unique constraint rolls back cleanly inside
+            # the request's outer transaction instead of poisoning it.
+            with transaction.atomic():
+                return super().create(validated_data)
+        except IntegrityError as exc:
+            raise serializers.ValidationError(
+                {"user_id": "This user already has a membership in the organization."}
+            ) from exc
 
 
 class MeSerializer(serializers.Serializer):
