@@ -13,6 +13,13 @@ dependencies = [
     "python-dotenv>=1.0,<2.0",
 ]
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["apps*", "config*", "api*"]
+
 [dependency-groups]
 dev = [
     "black>=24.0",
