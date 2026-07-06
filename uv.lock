@@ -842,7 +842,7 @@ wheels = [
 [[package]]
 name = "sgdypa-backend"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "celery", extra = ["redis"] },
     { name = "django" },

@@ -212,21 +212,17 @@ El login-time sync y esta réplica comparten el mismo core, así que aplican los
 "eventsListeners": ["jboss-logging", "webhook"]
 ```
 
-**Extensión de Keycloak (SPI):** Keycloak *no* trae un webhook HTTP integrado; el listener `webhook` lo aporta una extensión SPI que debe desplegarse dentro de la imagen de Keycloak. El backend es agnóstico a la extensión concreta siempre que respete el contrato: `POST` del *admin event* con el header de firma HMAC-SHA256. Para desarrollo se recomienda una extensión de webhook que lea su configuración por entorno; hornea el JAR en la imagen y apúntala al backend con el mismo secreto:
+**Extensión de Keycloak (SPI):** Keycloak *no* trae un webhook HTTP integrado, así que el listener `webhook` lo aporta un SPI propio que vive en `docker/keycloak/spi/` (un *event listener* de ~2 clases). El `docker-compose.yml` construye la imagen de Keycloak con `docker/keycloak/Dockerfile`: compila el SPI con Maven y lo hornea con `kc.sh build` — no hace falta descargar ningún JAR externo. El SPI emite el *admin event* crudo firmado con **HMAC-SHA256** sobre el cuerpo exacto, cumpliendo el contrato que el backend ya verifica.
 
-```dockerfile
-# docker/keycloak/Dockerfile (ejemplo)
-FROM quay.io/keycloak/keycloak:26.6.0
-# Copia el JAR del SPI de webhook a /opt/keycloak/providers/
-COPY providers/keycloak-webhook.jar /opt/keycloak/providers/
-RUN /opt/keycloak/bin/kc.sh build
-```
+El SPI se configura por entorno (ya cableado en el servicio `keycloak` del Compose):
 
 ```yaml
-# variables de entorno del contenedor keycloak (según la extensión elegida)
-WEBHOOK_HTTP_BASE_PATH: http://host.docker.internal:8000/api/v1/identity/keycloak/events
-WEBHOOK_HTTP_AUTH_HMAC_SECRET: ${KEYCLOAK_WEBHOOK_SECRET:-dev-webhook-secret-change-me}
+WEBHOOK_TARGET_URL: ${KEYCLOAK_WEBHOOK_TARGET_URL:-http://host.docker.internal:8000/api/v1/identity/keycloak/events}
+WEBHOOK_HMAC_SECRET: ${KEYCLOAK_WEBHOOK_SECRET:-dev-webhook-secret-change-me}  # debe coincidir con el backend
+WEBHOOK_SIGNATURE_HEADER: ${KEYCLOAK_WEBHOOK_SIGNATURE_HEADER:-X-Keycloak-Signature}
 ```
+
+La app Django corre en el host, así que Keycloak la alcanza vía `host.docker.internal`; ese host está en `ALLOWED_HOSTS` de `config/settings/dev.py`. Si `WEBHOOK_TARGET_URL` o `WEBHOOK_HMAC_SECRET` faltan, el listener queda inerte (registra y omite) en lugar de romper el arranque de Keycloak.
 
 **Contrato del payload esperado** (forma del *admin event* de Keycloak; `representation` llega como string JSON):
 

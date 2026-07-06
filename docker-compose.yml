@@ -23,7 +23,10 @@ services:
       start_period: 10s
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.6.0
+    build:
+      context: ./docker/keycloak
+      dockerfile: Dockerfile
+    image: sgdypa-keycloak:26.6.0
     container_name: sgdypa-keycloak
     command: ["start-dev", "--import-realm"]
     environment:
@@ -32,6 +35,15 @@ services:
       KC_DB: dev-file
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
+      # Webhook event-listener SPI (docker/keycloak/spi) -> backend replication
+      # endpoint. The secret MUST match KEYCLOAK_WEBHOOK_SECRET on the backend.
+      WEBHOOK_TARGET_URL: ${KEYCLOAK_WEBHOOK_TARGET_URL:-http://host.docker.internal:8000/api/v1/identity/keycloak/events}
+      WEBHOOK_HMAC_SECRET: ${KEYCLOAK_WEBHOOK_SECRET:-dev-webhook-secret-change-me}
+      WEBHOOK_SIGNATURE_HEADER: ${KEYCLOAK_WEBHOOK_SIGNATURE_HEADER:-X-Keycloak-Signature}
+    extra_hosts:
+      # Lets the container reach the Django app running on the host (Linux parity
+      # with Docker Desktop's built-in host.docker.internal).
+      - "host.docker.internal:host-gateway"
     ports:
       - "${KEYCLOAK_PORT:-8080}:8080"
     volumes:
@@ -104,10 +116,20 @@ services:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.dev}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      # Reach Postgres over the compose network (not localhost). Overrides any
+      # POSTGRES_HOST from the bind-mounted .env, which is set for the host-run app.
+      DB_ENGINE: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-sgdypa}
+      POSTGRES_USER: ${POSTGRES_USER:-sgdypa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sgdypa_dev_password}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
     volumes:
       - .:/app
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   celery-beat:
@@ -122,10 +144,20 @@ services:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.dev}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      # Reach Postgres over the compose network (not localhost). Overrides any
+      # POSTGRES_HOST from the bind-mounted .env, which is set for the host-run app.
+      DB_ENGINE: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-sgdypa}
+      POSTGRES_USER: ${POSTGRES_USER:-sgdypa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sgdypa_dev_password}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
     volumes:
       - .:/app
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   tika:
