@@ -6,6 +6,10 @@
   "resetPasswordAllowed": true,
   "verifyEmail": false,
   "loginWithEmailAllowed": true,
+  "eventsEnabled": true,
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "eventsListeners": ["jboss-logging", "webhook"],
   "clients": [
     {
       "clientId": "sgdypa-api",

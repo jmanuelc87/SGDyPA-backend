@@ -116,6 +116,17 @@ KEYCLOAK_OIDC = {
     ),
 }
 
+# Keycloak -> backend replication webhook. Keycloak admin events are POSTed to
+# /api/v1/identity/keycloak/events and authenticated by an HMAC-SHA256 signature
+# over the raw body (NOT a JWT). When SECRET is unset the endpoint is disabled
+# and fails closed with 503.
+KEYCLOAK_WEBHOOK = {
+    "SECRET": os.environ.get("KEYCLOAK_WEBHOOK_SECRET"),
+    "SIGNATURE_HEADER": os.environ.get(
+        "KEYCLOAK_WEBHOOK_SIGNATURE_HEADER", "X-Keycloak-Signature"
+    ),
+}
+
 REST_FRAMEWORK = {
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%SZ",
     "EXCEPTION_HANDLER": "apps.platform.api_errors.api_exception_handler",

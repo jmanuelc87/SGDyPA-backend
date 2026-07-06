@@ -51,6 +51,36 @@ class User(AbstractUser):
         )
 
 
+class KeycloakReplicationEvent(models.Model):
+    """Dedupe ledger for Keycloak admin events replicated into the projection.
+
+    The Keycloak event id is unique, so re-delivered webhooks (Keycloak retries,
+    at-least-once delivery) are ignored idempotently. The parsed payload is
+    stored so the Celery worker can apply the projection without re-parsing the
+    HTTP request, and ``processed_at`` records when the projection write landed.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_id = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="Keycloak event id; the replication dedupe key.",
+    )
+    event_type = models.CharField(max_length=120, blank=True)
+    operation = models.CharField(max_length=32, blank=True)
+    keycloak_sub = models.CharField(max_length=255, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-received_at"]
+
+    def __str__(self) -> str:
+        return f"{self.event_type or 'event'}:{self.event_id}"
+
+
 class MembershipQuerySet(models.QuerySet):
     def active(self) -> models.QuerySet:
         now = timezone.now()

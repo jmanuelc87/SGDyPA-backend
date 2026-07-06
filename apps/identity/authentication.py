@@ -130,33 +130,18 @@ def resolve_user_from_claims(claims: dict[str, Any]) -> Any:
 
 
 def sync_user_projection(user: Any, claims: dict[str, Any]) -> None:
+    """Refresh an already-resolved projection from login token claims.
+
+    Delegates to the shared replication core so login-time sync and Keycloak
+    admin-event replication apply attributes identically (keyed on ``sub``,
+    never on email).
+    """
+
+    from apps.identity.replication import ProjectionAttributes, apply_projection
+
+    attrs = ProjectionAttributes.from_claims(claims)
     with transaction.atomic():
-        update_fields = []
-        email = claims.get("email")
-        if isinstance(email, str) and email and user.email != email:
-            user.email = email
-            update_fields.append("email")
-
-        first_name = claims.get("given_name")
-        if isinstance(first_name, str) and user.first_name != first_name:
-            user.first_name = first_name
-            update_fields.append("first_name")
-
-        last_name = claims.get("family_name")
-        if isinstance(last_name, str) and user.last_name != last_name:
-            user.last_name = last_name
-            update_fields.append("last_name")
-
-        email_verified = claims.get("email_verified")
-        if isinstance(email_verified, bool) and user.email_verified != email_verified:
-            user.email_verified = email_verified
-            update_fields.append("email_verified")
-
-        display_name = claims.get("name")
-        if isinstance(display_name, str) and user.display_name != display_name:
-            user.display_name = display_name
-            update_fields.append("display_name")
-
+        update_fields = apply_projection(user, attrs)
         if update_fields:
             user.save(update_fields=update_fields)
 
