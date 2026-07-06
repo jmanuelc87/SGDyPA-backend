@@ -12,7 +12,7 @@ Regla de arquitectura: **los límites son axes of change, no red**. Es decir, lo
 
 | App Django | Bounded context | Responsabilidad inicial |
 | --- | --- | --- |
-| `identity` | Identidad y autorización | Usuarios locales, organizaciones, membresías y resolución futura de `sub` de Keycloak. |
+| `identity` | Identidad y autorización | Usuarios locales, organizaciones, membresías y resolución del `sub` de Keycloak. |
 | `documents` | Gestión documental | Documentos, versiones, metadatos, clasificación y ciclo de vida documental. |
 | `retention_disposition` | Retención y disposición | Políticas de retención, solicitudes de disposición y aprobaciones. |
 | `audit_process` | Proceso de auditoría ISO 19011 | Programa, estados de auditoría, transiciones y seguimiento del proceso. |
@@ -84,13 +84,19 @@ La aplicación Django corre en el host; los servicios de soporte (PostgreSQL, Ke
    uv sync
    ```
 
-3. **Aplicar migraciones** (crea el schema; ver el bootstrap de RLS por tenant más arriba):
+3. **Configurar variables de entorno**. Copia la plantilla y ajusta los valores; `config.settings.base` carga `.env` automáticamente al arrancar (las variables reales del entorno tienen prioridad sobre el archivo). El archivo `.env` está en `.gitignore`.
+
+   ```bash
+   cp .env.example .env
+   ```
+
+4. **Aplicar migraciones** (crea el schema; ver el bootstrap de RLS por tenant más arriba):
 
    ```bash
    uv run python manage.py migrate
    ```
 
-4. **Arrancar el servidor de desarrollo**:
+5. **Arrancar el servidor de desarrollo**:
 
    ```bash
    uv run python manage.py runserver
@@ -98,7 +104,7 @@ La aplicación Django corre en el host; los servicios de soporte (PostgreSQL, Ke
 
    La API queda disponible en `http://localhost:8000/api/v1/`.
 
-5. **Verificar** con el endpoint de salud, que es el único público (`security: []` en el contrato):
+6. **Verificar** con el endpoint de salud, que es el único público (`security: []` en el contrato):
 
    ```bash
    curl http://localhost:8000/api/v1/health-checks
@@ -118,7 +124,7 @@ Convención de tareas: toda tarea Celery de SGDyPA debe aceptar un `idempotency_
 
 ### Autenticación bearer OIDC
 
-El backend valida los access tokens de Keycloak con estas variables de entorno:
+El backend valida los access tokens de Keycloak con estas variables de entorno (definidas en `.env`; ver el paso de configuración en «Ejecutar la aplicación»):
 
 | Variable | Valor de desarrollo | Descripción |
 | --- | --- | --- |
@@ -128,6 +134,25 @@ El backend valida los access tokens de Keycloak con estas variables de entorno:
 | `KEYCLOAK_OIDC_ALGORITHMS` | `RS256` | Algoritmos de firma aceptados (lista separada por comas). |
 
 El realm importado ya alinea el token emitido con esta validación: el cliente público `sgdypa-spa` incluye un mapper de audiencia que añade `sgdypa-api` al access token, y `sgdypa-api` existe como cliente bearer-only que representa al recurso.
+
+### Proyección de usuario local (provisioning)
+
+La autenticación es *fail-closed*: el backend nunca crea usuarios a partir de un token. Cada token válido debe corresponder a un `User` local previamente proyectado, anclado por el `sub` de Keycloak (`keycloak_sub`). Si no existe, la API responde `401` con `{"detail": "No local user projection exists for the token subject."}`.
+
+Usa el comando de management `provision_user` (solo para desarrollo/pruebas) para crear o actualizar esa proyección. La forma más simple es pasarle el propio access token; se decodifica **sin verificar la firma**, únicamente para leer los claims `sub`, `email` y `name`:
+
+```bash
+uv run python manage.py provision_user --token "<access-token>"
+```
+
+Esto es suficiente para `GET /api/v1/me`. Para endpoints con alcance de organización, crea además la organización, la membresía activa y un rol del sistema (`P1`–`P7`); el comando imprime el valor de `X-Organization-Id` que debes enviar en esas peticiones:
+
+```bash
+uv run python manage.py provision_user --token "<access-token>" \
+  --org-slug default-org --org-name "Default Org" --role P6
+```
+
+Alternativamente puedes pasar `--sub "<uuid>"` en lugar de `--token` (copiando el `sub` desde el propio token). Usa el token del mismo grant que enviarás a la API: un token de *Client Credentials* (service account) tiene un `sub` distinto al de un login de usuario.
 
 ### Configuración del cliente frontend (SPA)
 

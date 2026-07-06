@@ -1,7 +1,13 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parents[2]
+
+# Load environment variables from a local .env file (if present) before any
+# os.environ lookups below. Real environment variables always take precedence.
+load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = "change-me-in-environment"
 DEBUG = False
@@ -113,6 +119,12 @@ KEYCLOAK_OIDC = {
 REST_FRAMEWORK = {
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%SZ",
     "EXCEPTION_HANDLER": "apps.platform.api_errors.api_exception_handler",
+    # Stateless bearer auth: the Keycloak middleware validates the token and this
+    # authenticator surfaces the result to DRF. Replacing DRF's SessionAuthentication
+    # default removes CSRF enforcement, which does not apply to token auth.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "apps.identity.authentication.KeycloakBearerDRFAuthentication",
+    ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],

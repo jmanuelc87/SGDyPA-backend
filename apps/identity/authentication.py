@@ -9,6 +9,8 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from jwt import InvalidTokenError, PyJWKClient
 from jwt.exceptions import PyJWKClientError
+from rest_framework.authentication import BaseAuthentication
+from rest_framework.request import Request
 
 
 class SigningKey(Protocol):
@@ -167,3 +169,27 @@ def authenticate_bearer_token(
     claims = validator.validate(token)
     user = resolve_user_from_claims(claims)
     return user, claims
+
+
+class KeycloakBearerDRFAuthentication(BaseAuthentication):
+    """Bridge the bearer middleware's result into DRF without CSRF enforcement.
+
+    ``KeycloakBearerAuthenticationMiddleware`` has already validated the bearer
+    token and set ``request.user`` / ``request.keycloak_claims`` before the view
+    runs. This authenticator surfaces that identity to DRF so permissions like
+    ``IsAuthenticated`` work. Unlike DRF's default ``SessionAuthentication`` it
+    does not enforce CSRF, because this is stateless bearer auth with no session
+    cookie to protect. Requiring ``keycloak_claims`` ensures only requests the
+    bearer middleware actually authenticated are trusted (never a stray Django
+    session).
+    """
+
+    def authenticate(self, request: Request) -> tuple[Any, dict[str, Any]] | None:
+        claims = getattr(request._request, "keycloak_claims", None)
+        user = getattr(request._request, "user", None)
+        if claims is None or user is None or not user.is_authenticated:
+            return None
+        return (user, claims)
+
+    def authenticate_header(self, request: Request) -> str:
+        return 'Bearer realm="api"'
