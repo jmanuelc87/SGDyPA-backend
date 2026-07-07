@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.sgdypa.keycloak</groupId>
+  <artifactId>keycloak-webhook-spi</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <name>SGDyPA Keycloak Webhook Event Listener</name>
+  <description>
+    Emits Keycloak admin events to the SGDyPA backend as raw admin-event JSON,
+    signed with HMAC-SHA256 in the X-Keycloak-Signature header.
+  </description>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>17</maven.compiler.release>
+    <!-- Must track the Keycloak base image tag in docker/keycloak/Dockerfile. -->
+    <keycloak.version>26.6.0</keycloak.version>
+  </properties>
+
+  <dependencies>
+    <!-- All Keycloak/logging APIs are provided by the Keycloak runtime; never
+         bundle them into the provider jar. -->
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi-private</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-core</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jboss.logging</groupId>
+      <artifactId>jboss-logging</artifactId>
+      <version>3.5.3.Final</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>keycloak-webhook-spi</finalName>
+  </build>
+</project>

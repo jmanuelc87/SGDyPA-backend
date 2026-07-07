@@ -12,7 +12,7 @@ Regla de arquitectura: **los límites son axes of change, no red**. Es decir, lo
 
 | App Django | Bounded context | Responsabilidad inicial |
 | --- | --- | --- |
-| `identity` | Identidad y autorización | Usuarios locales, organizaciones, membresías y resolución futura de `sub` de Keycloak. |
+| `identity` | Identidad y autorización | Usuarios locales, organizaciones, membresías y resolución del `sub` de Keycloak. |
 | `documents` | Gestión documental | Documentos, versiones, metadatos, clasificación y ciclo de vida documental. |
 | `retention_disposition` | Retención y disposición | Políticas de retención, solicitudes de disposición y aprobaciones. |
 | `audit_process` | Proceso de auditoría ISO 19011 | Programa, estados de auditoría, transiciones y seguimiento del proceso. |
@@ -84,13 +84,19 @@ La aplicación Django corre en el host; los servicios de soporte (PostgreSQL, Ke
    uv sync
    ```
 
-3. **Aplicar migraciones** (crea el schema; ver el bootstrap de RLS por tenant más arriba):
+3. **Configurar variables de entorno**. Copia la plantilla y ajusta los valores; `config.settings.base` carga `.env` automáticamente al arrancar (las variables reales del entorno tienen prioridad sobre el archivo). El archivo `.env` está en `.gitignore`.
+
+   ```bash
+   cp .env.example .env
+   ```
+
+4. **Aplicar migraciones** (crea el schema; ver el bootstrap de RLS por tenant más arriba):
 
    ```bash
    uv run python manage.py migrate
    ```
 
-4. **Arrancar el servidor de desarrollo**:
+5. **Arrancar el servidor de desarrollo**:
 
    ```bash
    uv run python manage.py runserver
@@ -98,7 +104,7 @@ La aplicación Django corre en el host; los servicios de soporte (PostgreSQL, Ke
 
    La API queda disponible en `http://localhost:8000/api/v1/`.
 
-5. **Verificar** con el endpoint de salud, que es el único público (`security: []` en el contrato):
+6. **Verificar** con el endpoint de salud, que es el único público (`security: []` en el contrato):
 
    ```bash
    curl http://localhost:8000/api/v1/health-checks
@@ -108,17 +114,46 @@ Para otro entorno, fija `DJANGO_SETTINGS_MODULE` explícitamente (por ejemplo `D
 
 ## Jobs asíncronos
 
-Celery usa Redis como broker y result backend por defecto (`redis://localhost:6379/0`). En Compose, `celery-worker` ejecuta las tareas encoladas y `celery-beat` queda listo para tareas programadas.
+Celery usa Redis como broker y result backend por defecto (`redis://localhost:6379/0`). La app Celery es `config` (ver `config/celery.py`), así que el worker se arranca con `-A config`. **El worker debe estar corriendo para que se procesen las tareas encoladas** (por ejemplo la réplica de usuarios de Keycloak): un endpoint puede responder `202` y encolar la tarea, pero sin worker esa tarea se queda en la cola de Redis y nunca se aplica.
+
+Redis debe estar arriba antes de arrancar el worker:
+
+```bash
+docker compose up -d redis
+```
+
+### Opción A — worker en el host (recomendada para desarrollo)
+
+Corre el worker en el host con `uv`; así `localhost` resuelve tanto a Postgres (`localhost:5432`, puerto publicado por Compose) como a Redis (`localhost:6379`), igual que el `runserver` del host:
+
+```bash
+# Worker (procesa las tareas encoladas):
+uv run celery -A config worker --loglevel=INFO
+
+# Beat (solo si necesitas tareas programadas; la réplica por webhook no lo requiere):
+uv run celery -A config beat --loglevel=INFO
+```
+
+Para detenerlo: `Ctrl-C`, o si quedó en segundo plano, `pkill -f "celery -A config worker"`.
+
+### Opción B — worker en Docker Compose
+
+Compose define los servicios `celery-worker` y `celery-beat`:
 
 ```bash
 docker compose up -d redis celery-worker celery-beat
+docker compose logs -f celery-worker   # ver cómo consume las tareas
 ```
+
+> **Cuidado con la base de datos en Docker.** Los servicios `celery-worker`/`celery-beat` montan el repo (incluido `.env`) y no fijan `POSTGRES_HOST`. Si tu `.env` tiene `DB_ENGINE=postgres` con `POSTGRES_HOST=localhost`, dentro del contenedor `localhost` es el propio contenedor, **no** el servicio `postgres` de Compose, y el worker no podrá alcanzar la base que usa el `runserver` del host. Para usar el worker en Docker contra el Postgres de Compose, fija `POSTGRES_HOST=postgres` (y `CELERY_BROKER_URL=redis://redis:6379/0`) en el entorno del contenedor. En desarrollo, la Opción A evita este problema.
+
+Por defecto el worker carga `config.settings.dev` (definido en `config/celery.py`). Para otro entorno, exporta `DJANGO_SETTINGS_MODULE` antes del comando.
 
 Convención de tareas: toda tarea Celery de SGDyPA debe aceptar un `idempotency_key` estable del recurso/operación que la dispara. Las operaciones diferidas expuestas por API deben devolver `202 Accepted` y permitir sondeo por `GET` del recurso creado; el recurso base disponible es `POST /api/v1/platform/async-jobs` con header `Idempotency-Key`, seguido de `GET /api/v1/platform/async-jobs/{id}`.
 
 ### Autenticación bearer OIDC
 
-El backend valida los access tokens de Keycloak con estas variables de entorno:
+El backend valida los access tokens de Keycloak con estas variables de entorno (definidas en `.env`; ver el paso de configuración en «Ejecutar la aplicación»):
 
 | Variable | Valor de desarrollo | Descripción |
 | --- | --- | --- |
@@ -128,6 +163,106 @@ El backend valida los access tokens de Keycloak con estas variables de entorno:
 | `KEYCLOAK_OIDC_ALGORITHMS` | `RS256` | Algoritmos de firma aceptados (lista separada por comas). |
 
 El realm importado ya alinea el token emitido con esta validación: el cliente público `sgdypa-spa` incluye un mapper de audiencia que añade `sgdypa-api` al access token, y `sgdypa-api` existe como cliente bearer-only que representa al recurso.
+
+### Proyección de usuario local (provisioning)
+
+La autenticación es *fail-closed*: el backend nunca crea usuarios a partir de un token. Cada token válido debe corresponder a un `User` local previamente proyectado, anclado por el `sub` de Keycloak (`keycloak_sub`). Si no existe, la API responde `401` con `{"detail": "No local user projection exists for the token subject."}`.
+
+Usa el comando de management `provision_user` (solo para desarrollo/pruebas) para crear o actualizar esa proyección. La forma más simple es pasarle el propio access token; se decodifica **sin verificar la firma**, únicamente para leer los claims `sub`, `email` y `name`:
+
+```bash
+uv run python manage.py provision_user --token "<access-token>"
+```
+
+Esto es suficiente para `GET /api/v1/me`. Para endpoints con alcance de organización, crea además la organización, la membresía activa y un rol del sistema (`P1`–`P7`); el comando imprime el valor de `X-Organization-Id` que debes enviar en esas peticiones:
+
+```bash
+uv run python manage.py provision_user --token "<access-token>" \
+  --org-slug default-org --org-name "Default Org" --role P6
+```
+
+Alternativamente puedes pasar `--sub "<uuid>"` en lugar de `--token` (copiando el `sub` desde el propio token). Usa el token del mismo grant que enviarás a la API: un token de *Client Credentials* (service account) tiene un `sub` distinto al de un login de usuario.
+
+### Replicación Keycloak → backend (admin-event webhook)
+
+El *provisioning* manual y la sincronización en login solo refrescan un `User` que **ya existe**. Para reflejar en el backend los usuarios (y cambios de `email`, nombre, `emailVerified`, `enabled`) creados o modificados en Keycloak **sin esperar a que el usuario inicie sesión**, Keycloak envía sus *admin events* a un endpoint del backend que reconcilia la proyección.
+
+Ruta del flujo (todo anclado en `keycloak_sub`, nunca en email — ADR-0002):
+
+1. Keycloak dispara un *admin event* de tipo `USER` (`CREATE`/`UPDATE`/`DELETE`).
+2. Un *event listener* de Keycloak hace `POST` a `POST /api/v1/identity/keycloak/events` con el payload del evento, firmado con **HMAC-SHA256** sobre el cuerpo crudo en el header `X-Keycloak-Signature` (autenticación por secreto compartido, **no** JWT).
+3. El endpoint verifica la firma en tiempo constante, deduplica por `id` del evento (`identity.KeycloakReplicationEvent`), encola una tarea Celery y responde **`202`** de inmediato (*ack* rápido; el trabajo real corre en el worker).
+4. La tarea `process_keycloak_admin_event` aplica la proyección vía el core compartido (`apps/identity/replication.py`): `CREATE`/`UPDATE` hacen *upsert* keyed on `sub`; `DELETE` o `enabled: false` marcan `is_active=False` (nunca se borra la fila local, protegida por membresías y el audit trail). Es idempotente: `processed_at` corta reprocesos.
+
+El login-time sync y esta réplica comparten el mismo core, así que aplican los atributos de forma idéntica.
+
+**Configuración del backend** (variables en `.env`; ver «Ejecutar la aplicación»):
+
+| Variable | Valor de desarrollo | Descripción |
+| --- | --- | --- |
+| `KEYCLOAK_WEBHOOK_SECRET` | `dev-webhook-secret-change-me` | Secreto compartido para firmar/verificar el webhook. **Si está vacío el endpoint queda deshabilitado y responde `503` (fail-closed).** |
+| `KEYCLOAK_WEBHOOK_SIGNATURE_HEADER` | `X-Keycloak-Signature` | Header con el HMAC-SHA256 (hex) del cuerpo crudo. Se acepta un prefijo opcional `sha256=`. |
+
+**Cambios en el realm** (`docker/keycloak/sgdypa-realm.json`): se habilitan eventos de administración y se registra el listener del webhook.
+
+```json
+"eventsEnabled": true,
+"adminEventsEnabled": true,
+"adminEventsDetailsEnabled": true,
+"eventsListeners": ["jboss-logging", "webhook"]
+```
+
+**Extensión de Keycloak (SPI):** Keycloak *no* trae un webhook HTTP integrado, así que el listener `webhook` lo aporta un SPI propio que vive en `docker/keycloak/spi/` (un *event listener* de ~2 clases). El `docker-compose.yml` construye la imagen de Keycloak con `docker/keycloak/Dockerfile`: compila el SPI con Maven y lo hornea con `kc.sh build` — no hace falta descargar ningún JAR externo. El SPI emite el *admin event* crudo firmado con **HMAC-SHA256** sobre el cuerpo exacto, cumpliendo el contrato que el backend ya verifica.
+
+El SPI se configura por entorno (ya cableado en el servicio `keycloak` del Compose):
+
+```yaml
+WEBHOOK_TARGET_URL: ${KEYCLOAK_WEBHOOK_TARGET_URL:-http://host.docker.internal:8000/api/v1/identity/keycloak/events}
+WEBHOOK_HMAC_SECRET: ${KEYCLOAK_WEBHOOK_SECRET:-dev-webhook-secret-change-me}  # debe coincidir con el backend
+WEBHOOK_SIGNATURE_HEADER: ${KEYCLOAK_WEBHOOK_SIGNATURE_HEADER:-X-Keycloak-Signature}
+```
+
+La app Django corre en el host, así que Keycloak la alcanza vía `host.docker.internal`; ese host está en `ALLOWED_HOSTS` de `config/settings/dev.py`. Si `WEBHOOK_TARGET_URL` o `WEBHOOK_HMAC_SECRET` faltan, el listener queda inerte (registra y omite) en lugar de romper el arranque de Keycloak.
+
+**Contrato del payload esperado** (forma del *admin event* de Keycloak; `representation` llega como string JSON):
+
+```json
+{
+  "id": "0b8f...-evento",
+  "type": "admin.USER-CREATE",
+  "operationType": "CREATE",
+  "resourceType": "USER",
+  "resourcePath": "users/8f3c...-uuid-del-usuario",
+  "representation": "{\"id\":\"8f3c...\",\"email\":\"user@example.com\",\"firstName\":\"...\",\"lastName\":\"...\",\"enabled\":true,\"emailVerified\":true}"
+}
+```
+
+El `sub` (id del usuario de Keycloak) se toma de `representation.id` o, en su defecto, del segmento `users/{id}` de `resourcePath`. Los eventos que no son de recurso `USER` se aceptan con `202 {"status":"ignored"}` para que Keycloak no los reintente.
+
+> **El worker de Celery debe estar corriendo.** El endpoint responde `202` y encola la tarea, pero la escritura en `identity_user` la aplica `process_keycloak_admin_event` en el worker. Sin worker, verás `202` pero **no** habrá sync. Arráncalo según «[Jobs asíncronos](#jobs-asíncronos)».
+
+Prueba manual del endpoint. La firma HMAC se calcula sobre los **bytes exactos** del cuerpo, así que hay que firmar y enviar los mismos bytes. Lo más robusto es escribir el cuerpo a un archivo (con `printf`, **sin** salto de línea final) y enviarlo con `--data-binary` (que no altera el contenido):
+
+```bash
+SECRET='dev-webhook-secret-change-me'
+
+# Cuerpo a un archivo con printf (NO uses echo: añade un \n y cambia el hash).
+printf '%s' '{"id":"evt-1","operationType":"CREATE","resourceType":"USER","resourcePath":"users/kc-sub-1","representation":"{\"id\":\"kc-sub-1\",\"email\":\"user@example.com\",\"enabled\":true}"}' > /tmp/kc-event.json
+
+# Firma ese archivo exacto.
+SIG=$(openssl dgst -sha256 -hmac "$SECRET" /tmp/kc-event.json | awk '{print $NF}')
+
+# Envía ese archivo exacto con --data-binary (no --data, que puede alterar bytes).
+curl -sS -X POST http://localhost:8000/api/v1/identity/keycloak/events \
+  -H "Content-Type: application/json" \
+  -H "X-Keycloak-Signature: $SIG" \
+  --data-binary @/tmp/kc-event.json
+# -> 202 {"status": "accepted", "event_id": "evt-1"}
+```
+
+> Si obtienes `401 {"code": "authentication_failed", ...}`, casi siempre es que los bytes firmados no coinciden con los enviados: firmaste con `echo` (añade `\n`), enviaste con `--data` (puede quitar/alterar bytes), o el `KEYCLOAK_WEBHOOK_SECRET` real del entorno difiere del usado al firmar (una variable de entorno exportada tiene prioridad sobre `.env`).
+
+> **Nota sobre el audit trail:** `trail.TrailEntry` es *append-only* pero está acotado a `organization` + `actor` (ambos obligatorios). Un evento de réplica es global e iniciado por el sistema (sin organización ni usuario actor), por lo que no encaja en el ledger actual; estas escrituras se registran vía *structured logging* (`apps.identity.replication`). Si se requiere auditoría formal de la réplica, haría falta un trail con alcance de sistema.
 
 ### Configuración del cliente frontend (SPA)
 

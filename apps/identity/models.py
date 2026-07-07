@@ -14,11 +14,43 @@ class Organization(models.Model):
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=120, unique=True)
     is_active = models.BooleanField(default=True)
+    keycloak_group_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text=(
+            "Keycloak group id this org mirrors. NULL for locally-managed orgs; "
+            "the strong join key for group-membership replication."
+        ),
+    )
+    keycloak_group_path = models.CharField(
+        max_length=512,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text=(
+            "Keycloak full group path (e.g. /parent/child). The token `groups` "
+            "claim carries paths, not ids, so login reconciliation matches on it."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["name", "id"]
+        constraints = [
+            # A Keycloak group maps to exactly one Organization. The id is the
+            # strong key (unique=True on the field handles it, allowing many
+            # NULLs for locally-managed orgs). The path is the key the token
+            # `groups` claim carries, so it must be unique too — but only when
+            # set: locally-managed orgs share the empty-string default.
+            models.UniqueConstraint(
+                fields=["keycloak_group_path"],
+                condition=~models.Q(keycloak_group_path=""),
+                name="uniq_organization_keycloak_group_path",
+            ),
+        ]
 
     def __str__(self) -> str:
         return str(self.name)
@@ -49,6 +81,36 @@ class User(AbstractUser):
             .filter(organization_id=organization_id)
             .exists(),
         )
+
+
+class KeycloakReplicationEvent(models.Model):
+    """Dedupe ledger for Keycloak admin events replicated into the projection.
+
+    The Keycloak event id is unique, so re-delivered webhooks (Keycloak retries,
+    at-least-once delivery) are ignored idempotently. The parsed payload is
+    stored so the Celery worker can apply the projection without re-parsing the
+    HTTP request, and ``processed_at`` records when the projection write landed.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_id = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="Keycloak event id; the replication dedupe key.",
+    )
+    event_type = models.CharField(max_length=120, blank=True)
+    operation = models.CharField(max_length=32, blank=True)
+    keycloak_sub = models.CharField(max_length=255, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-received_at"]
+
+    def __str__(self) -> str:
+        return f"{self.event_type or 'event'}:{self.event_id}"
 
 
 class MembershipQuerySet(models.QuerySet):
@@ -105,6 +167,10 @@ class Membership(models.Model):
         SUSPENDED = "suspended", "Suspendida"
         REVOKED = "revoked", "Revocada"
 
+    class Origin(models.TextChoices):
+        KEYCLOAK = "keycloak", "Keycloak"
+        MANUAL = "manual", "Manual"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization,
@@ -120,6 +186,15 @@ class Membership(models.Model):
         max_length=20,
         choices=Status.choices,
         default=Status.INVITED,
+    )
+    origin = models.CharField(
+        max_length=20,
+        choices=Origin.choices,
+        default=Origin.MANUAL,
+        help_text=(
+            "Who owns this row's lifecycle. Keycloak group replication only "
+            "creates/prunes `keycloak` rows and never touches `manual` ones."
+        ),
     )
     scope = models.JSONField(
         default=dict,

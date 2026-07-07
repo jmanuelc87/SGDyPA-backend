@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -9,6 +10,10 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from jwt import InvalidTokenError, PyJWKClient
 from jwt.exceptions import PyJWKClientError
+from rest_framework.authentication import BaseAuthentication
+from rest_framework.request import Request
+
+logger = logging.getLogger("apps.identity.authentication")
 
 
 class SigningKey(Protocol):
@@ -124,37 +129,45 @@ def resolve_user_from_claims(claims: dict[str, Any]) -> Any:
         raise BearerAuthenticationError("Local user projection is inactive.")
 
     sync_user_projection(user, claims)
+    sync_user_organizations(user, claims)
     return user
 
 
+def sync_user_organizations(user: Any, claims: dict[str, Any]) -> None:
+    """Reconcile org memberships from login claims when replication is enabled.
+
+    Authoritative (prunes KC-managed memberships absent from the token) but
+    fail-open: a replication error is logged and swallowed so authentication is
+    never broken by a membership-sync problem.
+    """
+
+    from apps.identity import org_replication
+
+    if not org_replication.is_enabled():
+        return
+
+    try:
+        org_replication.reconcile_from_claims(user, claims, source="login")
+    except Exception:  # noqa: BLE001 - never let replication break auth
+        logger.exception(
+            "keycloak.org_replication.login_failed",
+            extra={"keycloak_sub": claims.get("sub")},
+        )
+
+
 def sync_user_projection(user: Any, claims: dict[str, Any]) -> None:
+    """Refresh an already-resolved projection from login token claims.
+
+    Delegates to the shared replication core so login-time sync and Keycloak
+    admin-event replication apply attributes identically (keyed on ``sub``,
+    never on email).
+    """
+
+    from apps.identity.replication import ProjectionAttributes, apply_projection
+
+    attrs = ProjectionAttributes.from_claims(claims)
     with transaction.atomic():
-        update_fields = []
-        email = claims.get("email")
-        if isinstance(email, str) and email and user.email != email:
-            user.email = email
-            update_fields.append("email")
-
-        first_name = claims.get("given_name")
-        if isinstance(first_name, str) and user.first_name != first_name:
-            user.first_name = first_name
-            update_fields.append("first_name")
-
-        last_name = claims.get("family_name")
-        if isinstance(last_name, str) and user.last_name != last_name:
-            user.last_name = last_name
-            update_fields.append("last_name")
-
-        email_verified = claims.get("email_verified")
-        if isinstance(email_verified, bool) and user.email_verified != email_verified:
-            user.email_verified = email_verified
-            update_fields.append("email_verified")
-
-        display_name = claims.get("name")
-        if isinstance(display_name, str) and user.display_name != display_name:
-            user.display_name = display_name
-            update_fields.append("display_name")
-
+        update_fields = apply_projection(user, attrs)
         if update_fields:
             user.save(update_fields=update_fields)
 
@@ -167,3 +180,27 @@ def authenticate_bearer_token(
     claims = validator.validate(token)
     user = resolve_user_from_claims(claims)
     return user, claims
+
+
+class KeycloakBearerDRFAuthentication(BaseAuthentication):
+    """Bridge the bearer middleware's result into DRF without CSRF enforcement.
+
+    ``KeycloakBearerAuthenticationMiddleware`` has already validated the bearer
+    token and set ``request.user`` / ``request.keycloak_claims`` before the view
+    runs. This authenticator surfaces that identity to DRF so permissions like
+    ``IsAuthenticated`` work. Unlike DRF's default ``SessionAuthentication`` it
+    does not enforce CSRF, because this is stateless bearer auth with no session
+    cookie to protect. Requiring ``keycloak_claims`` ensures only requests the
+    bearer middleware actually authenticated are trusted (never a stray Django
+    session).
+    """
+
+    def authenticate(self, request: Request) -> tuple[Any, dict[str, Any]] | None:
+        claims = getattr(request._request, "keycloak_claims", None)
+        user = getattr(request._request, "user", None)
+        if claims is None or user is None or not user.is_authenticated:
+            return None
+        return (user, claims)
+
+    def authenticate_header(self, request: Request) -> str:
+        return 'Bearer realm="api"'

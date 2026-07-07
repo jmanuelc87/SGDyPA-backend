@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from apps.identity import views
+from apps.identity import views, webhooks
 
 router = DefaultRouter(trailing_slash=False)
 router.register("organizations", views.OrganizationViewSet, basename="organization")
@@ -11,5 +11,10 @@ router.register("memberships", views.MembershipViewSet, basename="membership")
 
 urlpatterns = [
     path("me", views.me, name="me"),
+    path(
+        "identity/keycloak/events",
+        webhooks.keycloak_events,
+        name="keycloak-events",
+    ),
     path("", include(router.urls)),
 ]

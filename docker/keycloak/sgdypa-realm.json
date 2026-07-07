@@ -6,6 +6,22 @@
   "resetPasswordAllowed": true,
   "verifyEmail": false,
   "loginWithEmailAllowed": true,
+  "eventsEnabled": true,
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "eventsListeners": ["jboss-logging", "webhook"],
+  "roles": {
+    "realm": [
+      {"name": "auditor-lider", "description": "Auditor Líder (maps to P1)"},
+      {"name": "auditor", "description": "Auditor (maps to P2)"},
+      {"name": "auditado", "description": "Auditado (maps to P3)"},
+      {"name": "gestor-documental", "description": "Gestor Documental (maps to P4)"},
+      {"name": "responsable-programa", "description": "Responsable de Programa (maps to P5)"},
+      {"name": "tenant-admin", "description": "Administrador del Tenant (maps to P6)"},
+      {"name": "auditor-externo", "description": "Auditor Externo (maps to P7)"}
+    ]
+  },
+  "groups": [],
   "clients": [
     {
       "clientId": "sgdypa-api",
@@ -30,6 +46,52 @@
       "redirectUris": ["http://localhost:5173/*", "http://127.0.0.1:5173/*"],
       "webOrigins": ["http://localhost:5173", "http://127.0.0.1:5173"],
       "attributes": {
+      },
+      "protocolMappers": [
+        {
+          "name": "sgdypa-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "sgdypa-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "claim.name": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "postman-client",
+      "name": "Postman Client (dev)",
+      "description": "Confidential client for testing the SGDyPA API from Postman.",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "secret": "postman-client-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": ["https://pstmn.io", "https://oauth.pstmn.io/v1/callback"],
+      "webOrigins": ["+"],
+      "attributes": {
         "pkce.code.challenge.method": "S256"
       },
       "protocolMappers": [
@@ -44,6 +106,20 @@
             "access.token.claim": "true",
             "introspection.token.claim": "true",
             "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "claim.name": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
           }
         }
       ]

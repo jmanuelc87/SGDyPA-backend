@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -179,3 +181,63 @@ class IdentityAPITests(TestCase):
             ).count(),
             1,
         )
+
+
+class BearerAuthWriteTests(TestCase):
+    """Exercise the real bearer path (no force_authenticate) so the DRF
+    authentication + CSRF behaviour is actually covered. force_authenticate
+    bypasses authenticators and CSRF, which previously hid the SessionAuthentication
+    CSRF enforcement on writes."""
+
+    def setUp(self) -> None:
+        seed_system_roles()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="admin",
+            email="admin@example.com",
+            keycloak_sub="kc-admin",
+        )
+        self.invited_user = User.objects.create_user(
+            username="external",
+            email="external@example.com",
+            keycloak_sub="kc-external",
+        )
+        self.organization = Organization.objects.create(name="Acme", slug="acme")
+        self.membership = Membership.objects.create(
+            organization=self.organization,
+            user=self.user,
+            status=Membership.Status.ACTIVE,
+        )
+        assign_membership_role(self.membership, Role.objects.get(code="P6"))
+        # No force_authenticate: requests go through the bearer middleware.
+        # enforce_csrf_checks=True so DRF's CSRF enforcement is actually exercised
+        # (the default test client bypasses it via _dont_enforce_csrf_checks).
+        self.client = APIClient(enforce_csrf_checks=True)
+
+    def test_bearer_post_write_does_not_require_csrf(self) -> None:
+        claims = {"sub": "kc-admin"}
+        with patch(
+            "apps.identity.authentication.authenticate_bearer_token",
+            return_value=(self.user, claims),
+        ):
+            response = self.client.post(
+                "/api/v1/memberships",
+                {"user_id": str(self.invited_user.id)},
+                format="json",
+                HTTP_AUTHORIZATION="Bearer dummy-token",
+                HTTP_X_ORGANIZATION_ID=str(self.organization.id),
+                HTTP_IDEMPOTENCY_KEY="77777777-7777-4777-8777-777777777777",
+            )
+
+        self.assertEqual(response.status_code, 201, response.content)
+
+    def test_write_without_bearer_is_rejected(self) -> None:
+        response = self.client.post(
+            "/api/v1/memberships",
+            {"user_id": str(self.invited_user.id)},
+            format="json",
+            HTTP_X_ORGANIZATION_ID=str(self.organization.id),
+            HTTP_IDEMPOTENCY_KEY="88888888-8888-4888-8888-888888888888",
+        )
+
+        self.assertIn(response.status_code, (401, 403))
