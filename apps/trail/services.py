@@ -6,10 +6,9 @@ from typing import Any
 from uuid import UUID
 
 from django.db import transaction
-from django.db.models import Max
 
 from apps.identity.models import Organization, User
-from apps.trail.models import TrailEntry
+from apps.trail.models import LedgerHead, TrailEntry
 
 
 def append_trail_entry(
@@ -31,19 +30,18 @@ def append_trail_entry(
 
     entry_payload = payload or {}
     with transaction.atomic():
-        # Serialize sequence allocation per tenant by locking the Organization row.
-        locked_organization = Organization.objects.select_for_update().get(
-            pk=organization.pk
+        # Serialize appends per tenant by locking the LEDGER_HEAD row (ADR-0008): the lock
+        # and the chain tip are the same row. The first append for a tenant seeds the row;
+        # every later append takes the row lock, reads the tip, and advances it. The lock is
+        # held to commit, so no concurrent writer of the same tenant reads a stale tip.
+        head, _ = LedgerHead.objects.select_for_update().get_or_create(
+            organization_id=organization.pk,
+            defaults={"ultima_secuencia": 0, "ultimo_hash": ""},
         )
-        previous_entry = (
-            TrailEntry.objects.filter(organization=locked_organization)
-            .order_by("-sequence")
-            .first()
-        )
-        sequence = (previous_entry.sequence + 1) if previous_entry else 1
-        previous_hash = previous_entry.entry_hash if previous_entry else ""
+        sequence = head.ultima_secuencia + 1
+        previous_hash = head.ultimo_hash
         entry_hash = _hash_entry(
-            organization_id=locked_organization.id,
+            organization_id=organization.id,
             actor_id=actor.id,
             actor_email_snapshot=actor.email,
             actor_display_name_snapshot=actor.display_name,
@@ -54,8 +52,8 @@ def append_trail_entry(
             sequence=sequence,
             previous_hash=previous_hash,
         )
-        return TrailEntry.objects.create(
-            organization=locked_organization,
+        entry = TrailEntry.objects.create(
+            organization_id=organization.pk,
             actor=actor,
             actor_email_snapshot=actor.email,
             actor_display_name_snapshot=actor.display_name,
@@ -67,19 +65,21 @@ def append_trail_entry(
             previous_hash=previous_hash,
             entry_hash=entry_hash,
         )
+        head.ultima_secuencia = sequence
+        head.ultimo_hash = entry_hash
+        head.save(update_fields=["ultima_secuencia", "ultimo_hash", "updated_at"])
+        return entry
 
 
 def next_sequence_for_organization(organization: Organization) -> int:
     """Return the next trail sequence for read-only previews/tests.
 
     Do not use this helper to allocate sequences; use ``append_trail_entry`` so the
-    organization row lock serializes concurrent writers.
+    LEDGER_HEAD row lock serializes concurrent writers.
     """
 
-    latest = TrailEntry.objects.filter(organization=organization).aggregate(
-        max_sequence=Max("sequence")
-    )["max_sequence"]
-    return (latest or 0) + 1
+    head = LedgerHead.objects.filter(organization=organization).first()
+    return (head.ultima_secuencia if head else 0) + 1
 
 
 def _hash_entry(
