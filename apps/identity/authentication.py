@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -11,6 +12,8 @@ from jwt import InvalidTokenError, PyJWKClient
 from jwt.exceptions import PyJWKClientError
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.request import Request
+
+logger = logging.getLogger("apps.identity.authentication")
 
 
 class SigningKey(Protocol):
@@ -126,7 +129,30 @@ def resolve_user_from_claims(claims: dict[str, Any]) -> Any:
         raise BearerAuthenticationError("Local user projection is inactive.")
 
     sync_user_projection(user, claims)
+    sync_user_organizations(user, claims)
     return user
+
+
+def sync_user_organizations(user: Any, claims: dict[str, Any]) -> None:
+    """Reconcile org memberships from login claims when replication is enabled.
+
+    Authoritative (prunes KC-managed memberships absent from the token) but
+    fail-open: a replication error is logged and swallowed so authentication is
+    never broken by a membership-sync problem.
+    """
+
+    from apps.identity import org_replication
+
+    if not org_replication.is_enabled():
+        return
+
+    try:
+        org_replication.reconcile_from_claims(user, claims, source="login")
+    except Exception:  # noqa: BLE001 - never let replication break auth
+        logger.exception(
+            "keycloak.org_replication.login_failed",
+            extra={"keycloak_sub": claims.get("sub")},
+        )
 
 
 def sync_user_projection(user: Any, claims: dict[str, Any]) -> None:

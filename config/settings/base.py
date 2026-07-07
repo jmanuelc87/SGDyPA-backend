@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -33,6 +34,7 @@ BOUNDED_CONTEXT_APPS = [
 ]
 
 THIRD_PARTY_APPS = [
+    "corsheaders",
     "rest_framework",
 ]
 
@@ -40,6 +42,10 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + BOUNDED_CONTEXT_APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # CorsMiddleware must run before CommonMiddleware (and any view that can
+    # generate a response) so CORS headers are attached to every response,
+    # including preflight OPTIONS requests.
+    "corsheaders.middleware.CorsMiddleware",
     "apps.platform.middleware.RequestIDMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -126,6 +132,41 @@ KEYCLOAK_WEBHOOK = {
         "KEYCLOAK_WEBHOOK_SIGNATURE_HEADER", "X-Keycloak-Signature"
     ),
 }
+
+# Keycloak group -> local Organization membership replication. When ENABLED, a
+# user's Keycloak group membership drives local Membership rows and their mapped
+# realm/client roles drive P1-P7 MembershipRole rows, reconciled at login (full
+# token, authoritative) and via GROUP_MEMBERSHIP admin events (incremental).
+# Fails safe: OFF by default, so no membership is ever created or pruned unless
+# an operator opts in.
+#
+# Keycloak setup required when ENABLED: a Group Membership token mapper with
+# "Full group path" on (claim name = GROUPS_CLAIM, added to the access token),
+# the realm-roles scope on the access token, client-role mappers if used, and
+# the admin-event webhook SPI delivering GROUP_MEMBERSHIP events (not only USER).
+#
+# ROLE_MAP maps Keycloak role names -> local P1-P7 codes. Roles are GLOBAL: the
+# mapped codes apply to every group-derived membership the user has.
+DEFAULT_ROLE_MAP: dict[str, str] = {}
+
+KEYCLOAK_ORG_REPLICATION = {
+    "ENABLED": os.environ.get("KEYCLOAK_ORG_REPLICATION_ENABLED", "false").lower()
+    == "true",
+    "GROUPS_CLAIM": os.environ.get("KEYCLOAK_GROUPS_CLAIM", "groups"),
+    "ROLE_MAP": json.loads(os.environ.get("KEYCLOAK_ROLE_MAP", "{}"))
+    or DEFAULT_ROLE_MAP,
+}
+
+# Cross-Origin Resource Sharing. The SPA (e.g. the Vite dev server) is served
+# from a different origin than this API, so browsers require the API to opt the
+# origin in explicitly. Auth is stateless bearer tokens in the Authorization
+# header (no cookies), so credentials are not enabled. Origins come from the
+# CORS_ALLOWED_ORIGINS env var as a comma-separated list; dev supplies a default.
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
 
 REST_FRAMEWORK = {
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%SZ",

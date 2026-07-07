@@ -36,6 +36,7 @@ class ProjectionAttributes:
     as a join key (ADR-0002).
     """
 
+    username: str | None = None
     email: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -48,6 +49,7 @@ class ProjectionAttributes:
         """Build attributes from OIDC token claims (login-time sync)."""
 
         return cls(
+            username=_str_or_none(claims.get("preferred_username")),
             email=_str_or_none(claims.get("email")),
             first_name=_str_or_none(claims.get("given_name")),
             last_name=_str_or_none(claims.get("family_name")),
@@ -73,6 +75,7 @@ class ProjectionAttributes:
         composed = " ".join(part for part in (first_name, last_name) if part).strip()
 
         return cls(
+            username=_str_or_none(representation.get("username")),
             email=_str_or_none(representation.get("email")),
             first_name=first_name,
             last_name=last_name,
@@ -89,6 +92,17 @@ def apply_projection(user: Any, attrs: ProjectionAttributes) -> list[str]:
     """
 
     update_fields: list[str] = []
+
+    # Username is a non-empty, unique column; an empty/absent source value must
+    # never clear it. This also heals legacy rows created before username was
+    # projected, where it was seeded with the immutable `sub` (a UUID).
+    if (
+        attrs.username is not None
+        and attrs.username
+        and user.username != attrs.username
+    ):
+        user.username = attrs.username
+        update_fields.append("username")
 
     # Email is a value that must be non-empty to overwrite; an empty email in a
     # source is treated as "absent" rather than clearing a real address.
@@ -138,9 +152,11 @@ def upsert_user_projection(
     with transaction.atomic():
         user, created = UserModel.objects.select_for_update().get_or_create(
             keycloak_sub=sub,
-            # username defaults to the immutable sub (guaranteed unique) rather
-            # than email, which is neither unique nor an identity key.
-            defaults={"username": sub},
+            # Seed with the real Keycloak username; fall back to email, then to
+            # the immutable sub as a last resort (username is NOT NULL and must
+            # be unique, and email may be absent). apply_projection heals the
+            # username on a later event/login once one is available.
+            defaults={"username": attrs.username or attrs.email or sub},
         )
         changed = apply_projection(user, attrs)
         if changed:

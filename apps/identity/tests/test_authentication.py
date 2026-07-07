@@ -16,8 +16,10 @@ from apps.identity.authentication import (
     BearerAuthenticationError,
     KeycloakOIDCConfig,
     KeycloakTokenValidator,
+    resolve_user_from_claims,
 )
 from apps.identity.middleware import KeycloakBearerAuthenticationMiddleware
+from apps.identity.models import Membership, Organization
 
 ISSUER = "http://keycloak.example/realms/sgdypa"
 AUDIENCE = "sgdypa-api"
@@ -178,3 +180,93 @@ class KeycloakBearerAuthenticationMiddlewareTests(TestCase):
                 HTTP_AUTHORIZATION=f"Bearer {token}",
             )
             return self.middleware(request)
+
+
+@override_settings(
+    KEYCLOAK_ORG_REPLICATION={
+        "ENABLED": True,
+        "GROUPS_CLAIM": "groups",
+        "ROLE_MAP": {"auditor": "P2"},
+    }
+)
+class LoginOrganizationSyncTests(TestCase):
+    """resolve_user_from_claims reconciles org memberships from login claims."""
+
+    def _user(self, sub: str = "kc-sub-1"):
+        return get_user_model().objects.create_user(username=sub, keycloak_sub=sub)
+
+    def _claims(self, sub: str = "kc-sub-1", **overrides: object) -> dict:
+        claims = {"sub": sub, "email": "u@example.com"}
+        claims.update(overrides)
+        return claims
+
+    def test_login_creates_memberships_and_roles(self) -> None:
+        user = self._user()
+
+        resolve_user_from_claims(
+            self._claims(groups=["/acme"], realm_access={"roles": ["auditor"]})
+        )
+
+        membership = Membership.objects.get(user=user)
+        self.assertEqual(membership.origin, Membership.Origin.KEYCLOAK)
+        self.assertEqual(set(membership.roles.values_list("code", flat=True)), {"P2"})
+
+    def test_login_prunes_dropped_group(self) -> None:
+        user = self._user()
+        org = Organization.objects.create(
+            name="Acme", slug="acme", keycloak_group_path="/acme"
+        )
+        Membership.objects.create(
+            organization=org,
+            user=user,
+            status=Membership.Status.ACTIVE,
+            origin=Membership.Origin.KEYCLOAK,
+        )
+
+        resolve_user_from_claims(self._claims(groups=["/beta"]))
+
+        dropped = Membership.objects.get(user=user, organization=org)
+        self.assertEqual(dropped.status, Membership.Status.REVOKED)
+
+    def test_login_leaves_manual_membership_intact(self) -> None:
+        user = self._user()
+        org = Organization.objects.create(name="Manual", slug="manual")
+        manual = Membership.objects.create(
+            organization=org,
+            user=user,
+            status=Membership.Status.ACTIVE,
+            origin=Membership.Origin.MANUAL,
+        )
+
+        resolve_user_from_claims(self._claims(groups=[]))
+
+        manual.refresh_from_db()
+        self.assertEqual(manual.status, Membership.Status.ACTIVE)
+
+    def test_login_without_groups_claim_does_not_prune(self) -> None:
+        user = self._user()
+        org = Organization.objects.create(
+            name="Acme", slug="acme", keycloak_group_path="/acme"
+        )
+        Membership.objects.create(
+            organization=org,
+            user=user,
+            status=Membership.Status.ACTIVE,
+            origin=Membership.Origin.KEYCLOAK,
+        )
+
+        resolve_user_from_claims(self._claims())
+
+        membership = Membership.objects.get(user=user)
+        self.assertEqual(membership.status, Membership.Status.ACTIVE)
+
+    def test_reconcile_failure_does_not_break_auth(self) -> None:
+        user = self._user()
+
+        with patch(
+            "apps.identity.org_replication.reconcile_from_claims",
+            side_effect=RuntimeError("boom"),
+        ):
+            resolved = resolve_user_from_claims(self._claims(groups=["/acme"]))
+
+        self.assertEqual(resolved.pk, user.pk)

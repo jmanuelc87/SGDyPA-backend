@@ -14,11 +14,43 @@ class Organization(models.Model):
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=120, unique=True)
     is_active = models.BooleanField(default=True)
+    keycloak_group_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text=(
+            "Keycloak group id this org mirrors. NULL for locally-managed orgs; "
+            "the strong join key for group-membership replication."
+        ),
+    )
+    keycloak_group_path = models.CharField(
+        max_length=512,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text=(
+            "Keycloak full group path (e.g. /parent/child). The token `groups` "
+            "claim carries paths, not ids, so login reconciliation matches on it."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["name", "id"]
+        constraints = [
+            # A Keycloak group maps to exactly one Organization. The id is the
+            # strong key (unique=True on the field handles it, allowing many
+            # NULLs for locally-managed orgs). The path is the key the token
+            # `groups` claim carries, so it must be unique too — but only when
+            # set: locally-managed orgs share the empty-string default.
+            models.UniqueConstraint(
+                fields=["keycloak_group_path"],
+                condition=~models.Q(keycloak_group_path=""),
+                name="uniq_organization_keycloak_group_path",
+            ),
+        ]
 
     def __str__(self) -> str:
         return str(self.name)
@@ -135,6 +167,10 @@ class Membership(models.Model):
         SUSPENDED = "suspended", "Suspendida"
         REVOKED = "revoked", "Revocada"
 
+    class Origin(models.TextChoices):
+        KEYCLOAK = "keycloak", "Keycloak"
+        MANUAL = "manual", "Manual"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization,
@@ -150,6 +186,15 @@ class Membership(models.Model):
         max_length=20,
         choices=Status.choices,
         default=Status.INVITED,
+    )
+    origin = models.CharField(
+        max_length=20,
+        choices=Origin.choices,
+        default=Origin.MANUAL,
+        help_text=(
+            "Who owns this row's lifecycle. Keycloak group replication only "
+            "creates/prunes `keycloak` rows and never touches `manual` ones."
+        ),
     )
     scope = models.JSONField(
         default=dict,

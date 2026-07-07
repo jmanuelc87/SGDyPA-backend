@@ -33,6 +33,16 @@ class ProjectionAttributesTests(TestCase):
         self.assertIsNone(attrs.display_name)
         self.assertIsNone(attrs.enabled)
 
+    def test_from_representation_maps_username(self) -> None:
+        attrs = ProjectionAttributes.from_representation({"username": "ada"})
+
+        self.assertEqual(attrs.username, "ada")
+
+    def test_from_claims_maps_preferred_username(self) -> None:
+        attrs = ProjectionAttributes.from_claims({"preferred_username": "ada"})
+
+        self.assertEqual(attrs.username, "ada")
+
     def test_from_claims_never_sets_enabled(self) -> None:
         attrs = ProjectionAttributes.from_claims(
             {"email": "x@example.com", "name": "X Y", "enabled": False}
@@ -58,11 +68,55 @@ class UpsertUserProjectionTests(TestCase):
 
         self.assertTrue(created)
         self.assertEqual(user.keycloak_sub, "kc-new")
-        self.assertEqual(user.username, "kc-new")
+        # No username in the source, so it falls back to email (then sub).
+        self.assertEqual(user.username, "new@example.com")
         self.assertEqual(user.email, "new@example.com")
         self.assertEqual(user.display_name, "New User")
         self.assertIs(user.email_verified, True)
         self.assertIn("email", changed)
+
+    def test_seeds_username_from_representation_not_sub(self) -> None:
+        user, created, _ = upsert_user_projection(
+            "kc-new",
+            ProjectionAttributes(username="ada", email="ada@example.com"),
+            source="test",
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(user.username, "ada")
+        self.assertNotEqual(user.username, "kc-new")
+
+    def test_falls_back_to_email_when_username_absent(self) -> None:
+        user, _, _ = upsert_user_projection(
+            "kc-nouser",
+            ProjectionAttributes(email="nouser@example.com"),
+            source="test",
+        )
+
+        self.assertEqual(user.username, "nouser@example.com")
+
+    def test_falls_back_to_sub_when_username_and_email_absent(self) -> None:
+        user, _, _ = upsert_user_projection(
+            "kc-bare",
+            ProjectionAttributes(),
+            source="test",
+        )
+
+        self.assertEqual(user.username, "kc-bare")
+
+    def test_heals_legacy_row_seeded_with_sub(self) -> None:
+        User = get_user_model()
+        # Legacy row created before username was projected: username == sub.
+        User.objects.create_user(username="kc-1", keycloak_sub="kc-1")
+
+        user, _, changed = upsert_user_projection(
+            "kc-1",
+            ProjectionAttributes(username="ada"),
+            source="test",
+        )
+
+        self.assertEqual(user.username, "ada")
+        self.assertIn("username", changed)
 
     def test_updates_existing_user_by_sub(self) -> None:
         User = get_user_model()
