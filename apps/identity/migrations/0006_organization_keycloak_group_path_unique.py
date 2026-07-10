@@ -22,6 +22,10 @@ def merge_duplicate_group_orgs(apps, schema_editor):
     Organization = apps.get_model("identity", "Organization")
     Membership = apps.get_model("identity", "Membership")
     TrailEntry = apps.get_model("trail", "TrailEntry")
+    try:
+        LedgerHead = apps.get_model("trail", "LedgerHead")
+    except LookupError:
+        LedgerHead = None
 
     canonical_rows = Organization.objects.filter(
         keycloak_group_id__isnull=False, keycloak_group_path=""
@@ -55,6 +59,8 @@ def merge_duplicate_group_orgs(apps, schema_editor):
                     membership.save(update_fields=["organization"])
             if not adopted_path:
                 adopted_path = twin.keycloak_group_path
+            if LedgerHead is not None:
+                LedgerHead.objects.filter(organization=twin).delete()
             twin.delete()
         # Only adopt the path if no surviving row still holds it (e.g. a
         # trail-bearing twin we deliberately skipped), so the unique constraint

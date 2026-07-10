@@ -5,21 +5,18 @@ from django.db import migrations, models
 
 
 def backfill_ledger_head(apps, schema_editor):
-    """Seed one LEDGER_HEAD per org that already has trail entries, from its current tip.
+    """Seed one LEDGER_HEAD per org, preserving existing trail tips.
 
-    Orgs with no entries need no row; ``append_trail_entry`` seeds them lazily on first
-    append. This keeps pre-existing chains continuous instead of restarting the tip at 0.
+    ADR-0008 needs a stable lock row before append paths run. Organizations
+    with entries are seeded from their current tip; empty organizations get genesis.
     """
 
     TrailEntry = apps.get_model("trail", "TrailEntry")
     LedgerHead = apps.get_model("trail", "LedgerHead")
 
-    organization_ids = (
-        TrailEntry.objects.order_by()
-        .values_list("organization_id", flat=True)
-        .distinct()
-    )
-    for organization_id in organization_ids:
+    Organization = apps.get_model("identity", "Organization")
+
+    for organization_id in Organization.objects.values_list("id", flat=True):
         tip = (
             TrailEntry.objects.filter(organization_id=organization_id)
             .order_by("-sequence")
@@ -28,8 +25,8 @@ def backfill_ledger_head(apps, schema_editor):
         LedgerHead.objects.update_or_create(
             organization_id=organization_id,
             defaults={
-                "ultima_secuencia": tip.sequence,
-                "ultimo_hash": tip.entry_hash,
+                "ultima_secuencia": tip.sequence if tip else 0,
+                "ultimo_hash": tip.entry_hash if tip else "",
             },
         )
 

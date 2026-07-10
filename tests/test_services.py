@@ -4,12 +4,14 @@ import threading
 import uuid
 
 import pytest
-from django.contrib.auth import get_user_model
-from django.db import IntegrityError, connection, connections, transaction
-
 from apps.identity.models import Organization
 from apps.trail.models import LedgerHead, TrailEntry
-from apps.trail.services import append_trail_entry, next_sequence_for_organization
+from apps.trail.services import (
+    append_trail_entry,
+    next_sequence_for_organization,
+)
+from django.contrib.auth import get_user_model
+from django.db import IntegrityError, connection, connections, transaction
 
 
 @pytest.fixture
@@ -88,10 +90,12 @@ def test_append_advances_materialized_ledger_head(
 
 
 @pytest.mark.django_db
-def test_first_append_lazily_seeds_single_ledger_head(
+def test_append_uses_preseeded_single_ledger_head(
     organization: Organization, actor
 ) -> None:
-    assert not LedgerHead.objects.filter(organization=organization).exists()
+    head = LedgerHead.objects.get(organization=organization)
+    assert head.ultima_secuencia == 0
+    assert head.ultimo_hash == ""
 
     first = append_trail_entry(
         organization=organization,
@@ -175,7 +179,7 @@ def test_trail_entry_rejects_updates_and_deletes(
 
 @pytest.mark.skipif(
     connection.vendor != "postgresql",
-    reason="Real row locking (SELECT FOR UPDATE) requires PostgreSQL; sqlite is a no-op.",
+    reason="Real row locking requires PostgreSQL; sqlite is a no-op.",
 )
 @pytest.mark.django_db(transaction=True)
 def test_concurrent_appends_keep_chain_dense_and_verifiable() -> None:
