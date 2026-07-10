@@ -5,7 +5,7 @@ import json
 from typing import Any
 from uuid import UUID
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.identity.models import Organization, User
 from apps.trail.models import LedgerHead, TrailEntry
@@ -30,14 +30,14 @@ def append_trail_entry(
 
     entry_payload = payload or {}
     with transaction.atomic():
-        # Serialize appends per tenant by locking the LEDGER_HEAD row (ADR-0008): the lock
-        # and the chain tip are the same row. The first append for a tenant seeds the row;
-        # every later append takes the row lock, reads the tip, and advances it. The lock is
-        # held to commit, so no concurrent writer of the same tenant reads a stale tip.
-        head, _ = LedgerHead.objects.select_for_update().get_or_create(
-            organization_id=organization.pk,
-            defaults={"ultima_secuencia": 0, "ultimo_hash": ""},
-        )
+        # Serialize appends per tenant by locking the LEDGER_HEAD row (ADR-0008):
+        # the lock and the chain tip are the same row. Migrations and Organization
+        # post_save create the row before append paths run, so SELECT ... FOR UPDATE
+        # is the first ledger operation and the lock is held to commit. The tiny
+        # fallback covers legacy/bulk-loaded tenants that bypassed signals; if two
+        # such first appends race, the losing insert retries as a locked read instead
+        # of allocating from an unlocked stale tip.
+        head = _locked_ledger_head_for_append(organization)
         sequence = head.ultima_secuencia + 1
         previous_hash = head.ultimo_hash
         entry_hash = _hash_entry(
@@ -69,6 +69,21 @@ def append_trail_entry(
         head.ultimo_hash = entry_hash
         head.save(update_fields=["ultima_secuencia", "ultimo_hash", "updated_at"])
         return entry
+
+
+def _locked_ledger_head_for_append(organization: Organization) -> LedgerHead:
+    try:
+        return LedgerHead.objects.select_for_update().get(organization=organization)
+    except LedgerHead.DoesNotExist:
+        try:
+            LedgerHead.objects.create(
+                organization=organization, ultima_secuencia=0, ultimo_hash=""
+            )
+        except IntegrityError:
+            # A concurrent writer seeded the legacy head first; continue by taking the
+            # row lock and reading the now-authoritative chain tip.
+            pass
+        return LedgerHead.objects.select_for_update().get(organization=organization)
 
 
 def next_sequence_for_organization(organization: Organization) -> int:
